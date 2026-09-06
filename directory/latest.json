@@ -1,0 +1,7 @@
+{
+  "directoryVersion": 1,
+  "generatedFrom": {
+    "ghsl": "GHS_UCDB_GLOBE_R2024A.gpkg",
+    "pipeline": "app/tools/CityAtlas"
+  }
+}

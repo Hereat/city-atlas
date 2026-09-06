@@ -1,0 +1,12 @@
+{
+  "_": "七座样本城。PRD 第 9 节要求的样本谱系：中国（直辖市／地级市／内陆）、东亚、欧洲、北美、GHSL 未覆盖的低密度小城。name 是 OSM 上的 name 标签原文，levels 是要试的 admin_level（市级的层号各国不同，这里逐城钉住而不是猜），box 是找这个关系时用的经纬窗口。",
+  "cities": [
+    {"slug": "shanghai",  "name": "上海市",     "levels": [4], "box": [120.80, 30.60, 122.20, 31.90], "why": "中国直辖市，稿里有对照图"},
+    {"slug": "hangzhou",  "name": "杭州市",     "levels": [5], "box": [118.30, 29.10, 120.80, 30.60], "why": "中国地级市，稿里有对照图"},
+    {"slug": "chengdu",   "name": "成都市",     "levels": [5], "box": [102.90, 30.00, 104.90, 31.50], "why": "中国内陆大市"},
+    {"slug": "kyoto",     "name": "京都市",     "levels": [7], "box": [135.50, 34.80, 135.95, 35.40], "why": "东亚；GHSL 里没有自己的城市中心，并进了大阪"},
+    {"slug": "amsterdam", "name": "Amsterdam", "levels": [8], "box": [4.70, 52.20, 5.10, 52.50],     "why": "欧洲；水网密"},
+    {"slug": "portland",  "name": "Portland",  "levels": [8], "box": [-122.85, 45.40, -122.40, 45.70], "why": "北美；美国的市是 admin_level 8"},
+    {"slug": "badischl",  "name": "Bad Ischl", "levels": [8], "box": [13.50, 47.60, 13.90, 47.90],   "why": "低密度小城；GHSL 未覆盖，走最小画框兜底"}
+  ]
+}

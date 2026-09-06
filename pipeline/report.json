@@ -1,0 +1,631 @@
+{
+  "generatedAt": "2026-09-04 19:09 UTC",
+  "totalSeconds": 2.29,
+  "shards": [
+    {
+      "cell": "29, 118",
+      "cities": "杭州市",
+      "path": "directory/v1/29_118.json.gz",
+      "size": "6 KB",
+      "bytes": 6441
+    },
+    {
+      "cell": "29, 119",
+      "cities": "杭州市",
+      "path": "directory/v1/29_119.json.gz",
+      "size": "10 KB",
+      "bytes": 9743
+    },
+    {
+      "cell": "29, 120",
+      "cities": "杭州市",
+      "path": "directory/v1/29_120.json.gz",
+      "size": "3 KB",
+      "bytes": 2983
+    },
+    {
+      "cell": "30, 102",
+      "cities": "成都市",
+      "path": "directory/v1/30_102.json.gz",
+      "size": "1 KB",
+      "bytes": 630
+    },
+    {
+      "cell": "30, 103",
+      "cities": "成都市",
+      "path": "directory/v1/30_103.json.gz",
+      "size": "9 KB",
+      "bytes": 9542
+    },
+    {
+      "cell": "30, 104",
+      "cities": "成都市",
+      "path": "directory/v1/30_104.json.gz",
+      "size": "8 KB",
+      "bytes": 7903
+    },
+    {
+      "cell": "30, 118",
+      "cities": "上海市、杭州市",
+      "path": "directory/v1/30_118.json.gz",
+      "size": "3 KB",
+      "bytes": 3505
+    },
+    {
+      "cell": "30, 119",
+      "cities": "杭州市",
+      "path": "directory/v1/30_119.json.gz",
+      "size": "5 KB",
+      "bytes": 5125
+    },
+    {
+      "cell": "30, 120",
+      "cities": "上海市、杭州市",
+      "path": "directory/v1/30_120.json.gz",
+      "size": "6 KB",
+      "bytes": 6368
+    },
+    {
+      "cell": "30, 121",
+      "cities": "上海市",
+      "path": "directory/v1/30_121.json.gz",
+      "size": "2 KB",
+      "bytes": 2249
+    },
+    {
+      "cell": "30, 122",
+      "cities": "上海市",
+      "path": "directory/v1/30_122.json.gz",
+      "size": "1 KB",
+      "bytes": 566
+    },
+    {
+      "cell": "30, 123",
+      "cities": "上海市",
+      "path": "directory/v1/30_123.json.gz",
+      "size": "1 KB",
+      "bytes": 541
+    },
+    {
+      "cell": "31, 103",
+      "cities": "成都市",
+      "path": "directory/v1/31_103.json.gz",
+      "size": "2 KB",
+      "bytes": 2097
+    },
+    {
+      "cell": "31, 104",
+      "cities": "成都市",
+      "path": "directory/v1/31_104.json.gz",
+      "size": "1 KB",
+      "bytes": 1097
+    },
+    {
+      "cell": "31, 119",
+      "cities": "上海市",
+      "path": "directory/v1/31_119.json.gz",
+      "size": "4 KB",
+      "bytes": 3770
+    },
+    {
+      "cell": "31, 120",
+      "cities": "上海市",
+      "path": "directory/v1/31_120.json.gz",
+      "size": "1 KB",
+      "bytes": 1244
+    },
+    {
+      "cell": "31, 121",
+      "cities": "上海市",
+      "path": "directory/v1/31_121.json.gz",
+      "size": "4 KB",
+      "bytes": 3983
+    },
+    {
+      "cell": "31, 122",
+      "cities": "上海市",
+      "path": "directory/v1/31_122.json.gz",
+      "size": "1 KB",
+      "bytes": 566
+    },
+    {
+      "cell": "32, 120",
+      "cities": "上海市",
+      "path": "directory/v1/32_120.json.gz",
+      "size": "1 KB",
+      "bytes": 822
+    },
+    {
+      "cell": "33, 120",
+      "cities": "上海市",
+      "path": "directory/v1/33_120.json.gz",
+      "size": "1 KB",
+      "bytes": 1144
+    },
+    {
+      "cell": "34, 135",
+      "cities": "京都市",
+      "path": "directory/v1/34_135.json.gz",
+      "size": "3 KB",
+      "bytes": 2858
+    },
+    {
+      "cell": "35, 135",
+      "cities": "京都市",
+      "path": "directory/v1/35_135.json.gz",
+      "size": "4 KB",
+      "bytes": 4003
+    },
+    {
+      "cell": "45, -123",
+      "cities": "波特兰",
+      "path": "directory/v1/45_-123.json.gz",
+      "size": "4 KB",
+      "bytes": 3856
+    },
+    {
+      "cell": "47, 13",
+      "cities": "Bad Ischl",
+      "path": "directory/v1/47_13.json.gz",
+      "size": "2 KB",
+      "bytes": 1753
+    },
+    {
+      "cell": "52, 4",
+      "cities": "Amsterdam",
+      "path": "directory/v1/52_4.json.gz",
+      "size": "1 KB",
+      "bytes": 1475
+    },
+    {
+      "cell": "52, 5",
+      "cities": "Amsterdam",
+      "path": "directory/v1/52_5.json.gz",
+      "size": "1 KB",
+      "bytes": 1266
+    }
+  ],
+  "cities": [
+    {
+      "slug": "shanghai",
+      "name": "上海市",
+      "cityID": "c00001",
+      "osmRelation": 913067,
+      "frame": [
+        6000,
+        7500
+      ],
+      "anchor": "admin_centre",
+      "ucdbCovered": true,
+      "source": {
+        "snapshot": "shanghai-features.json.gz",
+        "snapshotSha256": "bcd69f64b1f60586b4741c009e313f4dab5ba21c7c9052f464eb80c8fce31d73",
+        "snapshotBytes": 930613,
+        "osmBase": "2026-09-04T18:38:06Z"
+      },
+      "packageRawBytes": 234629,
+      "packageBytes": 90690,
+      "packageSha256": "7a44d20be319ceddd51b00770495383f0b838ca1b0ba1f1d974159a959aad874",
+      "seconds": {
+        "loadSnapshot": 0.11,
+        "buildPackage": 0.09,
+        "buildShards": 0.02,
+        "total": 0.22
+      },
+      "stats": {
+        "roads": {
+          "1": {
+            "lines": 1045,
+            "points": 3383
+          },
+          "2": {
+            "lines": 1371,
+            "points": 3836
+          },
+          "3": {
+            "lines": 1158,
+            "points": 3585
+          },
+          "4": {
+            "lines": 4255,
+            "points": 12328
+          }
+        },
+        "rail": {
+          "lines": 134,
+          "points": 404
+        },
+        "water": {
+          "polygons": 28,
+          "points": 862
+        },
+        "waterLines": {
+          "lines": 12,
+          "points": 182
+        },
+        "green": {
+          "polygons": 317,
+          "points": 2955
+        }
+      }
+    },
+    {
+      "slug": "hangzhou",
+      "name": "杭州市",
+      "cityID": "c00002",
+      "osmRelation": 3221112,
+      "frame": [
+        6000,
+        7500
+      ],
+      "anchor": "admin_centre",
+      "ucdbCovered": true,
+      "source": {
+        "snapshot": "hangzhou-features.json.gz",
+        "snapshotSha256": "25cd83cb79a009dce6c51d46bfa2b232cca59fef23b637f4b17643c538e90357",
+        "snapshotBytes": 543286,
+        "osmBase": "2026-09-04T19:06:51Z"
+      },
+      "packageRawBytes": 152405,
+      "packageBytes": 58907,
+      "packageSha256": "9033c50dd256a287edcf0ce8121f7ce654408bb76719ea0fe8d6b37aef372ec2",
+      "seconds": {
+        "loadSnapshot": 0.1,
+        "buildPackage": 0.06,
+        "buildShards": 0.05,
+        "total": 0.2
+      },
+      "stats": {
+        "roads": {
+          "1": {
+            "lines": 584,
+            "points": 1868
+          },
+          "2": {
+            "lines": 890,
+            "points": 2438
+          },
+          "3": {
+            "lines": 569,
+            "points": 1718
+          },
+          "4": {
+            "lines": 2101,
+            "points": 7078
+          }
+        },
+        "rail": {
+          "lines": 98,
+          "points": 294
+        },
+        "water": {
+          "polygons": 52,
+          "points": 1009
+        },
+        "waterLines": {
+          "lines": 47,
+          "points": 247
+        },
+        "green": {
+          "polygons": 323,
+          "points": 2985
+        }
+      }
+    },
+    {
+      "slug": "chengdu",
+      "name": "成都市",
+      "cityID": "c00003",
+      "osmRelation": 2110264,
+      "frame": [
+        6000,
+        7500
+      ],
+      "anchor": "ucdb",
+      "ucdbCovered": true,
+      "source": {
+        "snapshot": "chengdu-features.json.gz",
+        "snapshotSha256": "f9c88941b0662b27e4f604d2680c8961dea5c010c59c7afde28760563c8d8457",
+        "snapshotBytes": 407954,
+        "osmBase": "2026-09-04T18:41:06Z"
+      },
+      "packageRawBytes": 117301,
+      "packageBytes": 46342,
+      "packageSha256": "070af5ca942181ce04c135148fc59eb298528e60430774e9760aa2a3082c6c37",
+      "seconds": {
+        "loadSnapshot": 0.04,
+        "buildPackage": 0.04,
+        "buildShards": 0.02,
+        "total": 0.1
+      },
+      "stats": {
+        "roads": {
+          "1": {
+            "lines": 455,
+            "points": 1553
+          },
+          "2": {
+            "lines": 409,
+            "points": 1378
+          },
+          "3": {
+            "lines": 872,
+            "points": 2847
+          },
+          "4": {
+            "lines": 1713,
+            "points": 5400
+          }
+        },
+        "rail": {
+          "lines": 50,
+          "points": 129
+        },
+        "water": {
+          "polygons": 45,
+          "points": 875
+        },
+        "waterLines": {
+          "lines": 51,
+          "points": 507
+        },
+        "green": {
+          "polygons": 120,
+          "points": 1048
+        }
+      }
+    },
+    {
+      "slug": "kyoto",
+      "name": "京都市",
+      "cityID": "c00004",
+      "osmRelation": 357794,
+      "frame": [
+        6000,
+        7500
+      ],
+      "anchor": "admin_centre",
+      "ucdbCovered": true,
+      "source": {
+        "snapshot": "kyoto-features.json.gz",
+        "snapshotSha256": "dc3b2e474fbacca4a8b1411a3b70fbea909c016b722cdbcca85b742118a32295",
+        "snapshotBytes": 2683876,
+        "osmBase": "2026-09-04T18:41:06Z"
+      },
+      "packageRawBytes": 568743,
+      "packageBytes": 212066,
+      "packageSha256": "b8dc5902439fa2a2c9b44f173605d4c8f6c4b0c20531cd3626565239d65c35f6",
+      "seconds": {
+        "loadSnapshot": 0.2,
+        "buildPackage": 0.28,
+        "buildShards": 0.01,
+        "total": 0.49
+      },
+      "stats": {
+        "roads": {
+          "1": {
+            "lines": 443,
+            "points": 1264
+          },
+          "2": {
+            "lines": 637,
+            "points": 1867
+          },
+          "3": {
+            "lines": 3355,
+            "points": 8754
+          },
+          "4": {
+            "lines": 17303,
+            "points": 42559
+          }
+        },
+        "rail": {
+          "lines": 448,
+          "points": 1114
+        },
+        "water": {
+          "polygons": 97,
+          "points": 1221
+        },
+        "waterLines": {
+          "lines": 283,
+          "points": 1201
+        },
+        "green": {
+          "polygons": 816,
+          "points": 9723
+        }
+      }
+    },
+    {
+      "slug": "amsterdam",
+      "name": "Amsterdam",
+      "cityID": "c00005",
+      "osmRelation": 47811,
+      "frame": [
+        6000,
+        7500
+      ],
+      "anchor": "admin_centre",
+      "ucdbCovered": true,
+      "source": {
+        "snapshot": "amsterdam-features.json.gz",
+        "snapshotSha256": "15541073ebe4959aad62221b887fd36cbd2f0ef822e4c6dafcaab2c2bd9cf15d",
+        "snapshotBytes": 5171589,
+        "osmBase": "2026-09-04T18:41:06Z"
+      },
+      "packageRawBytes": 926601,
+      "packageBytes": 336044,
+      "packageSha256": "df4887ccba7b7597875fb62625a71f32de2ba7c1588b9d93408e4f94af13f55b",
+      "seconds": {
+        "loadSnapshot": 0.27,
+        "buildPackage": 0.51,
+        "buildShards": 0.01,
+        "total": 0.79
+      },
+      "stats": {
+        "roads": {
+          "1": {
+            "lines": 678,
+            "points": 1687
+          },
+          "2": {
+            "lines": 2447,
+            "points": 5684
+          },
+          "3": {
+            "lines": 5920,
+            "points": 13792
+          },
+          "4": {
+            "lines": 18931,
+            "points": 45966
+          }
+        },
+        "rail": {
+          "lines": 1051,
+          "points": 2351
+        },
+        "water": {
+          "polygons": 503,
+          "points": 6749
+        },
+        "waterLines": {
+          "lines": 1024,
+          "points": 2456
+        },
+        "green": {
+          "polygons": 3364,
+          "points": 27369
+        }
+      }
+    },
+    {
+      "slug": "portland",
+      "name": "波特兰",
+      "cityID": "c00006",
+      "osmRelation": 186579,
+      "frame": [
+        6000,
+        7500
+      ],
+      "anchor": "ucdb",
+      "ucdbCovered": true,
+      "source": {
+        "snapshot": "portland-features.json.gz",
+        "snapshotSha256": "e8ebfea86cd069a43da9d6efe0bae48ecadeca92ca7c16772b386339129fb151",
+        "snapshotBytes": 2425400,
+        "osmBase": "2026-09-04T18:42:11Z"
+      },
+      "packageRawBytes": 522515,
+      "packageBytes": 191017,
+      "packageSha256": "97cd7692c18c2f826a0df072faa396afc659ca27e4a21103b53ca5fe3f3da676",
+      "seconds": {
+        "loadSnapshot": 0.15,
+        "buildPackage": 0.21,
+        "buildShards": 0.0,
+        "total": 0.36
+      },
+      "stats": {
+        "roads": {
+          "1": {
+            "lines": 1358,
+            "points": 3576
+          },
+          "2": {
+            "lines": 2193,
+            "points": 5050
+          },
+          "3": {
+            "lines": 2652,
+            "points": 6398
+          },
+          "4": {
+            "lines": 16475,
+            "points": 38876
+          }
+        },
+        "rail": {
+          "lines": 424,
+          "points": 1497
+        },
+        "water": {
+          "polygons": 6,
+          "points": 357
+        },
+        "waterLines": {
+          "lines": 17,
+          "points": 85
+        },
+        "green": {
+          "polygons": 489,
+          "points": 5162
+        }
+      }
+    },
+    {
+      "slug": "badischl",
+      "name": "Bad Ischl",
+      "cityID": "c00007",
+      "osmRelation": 68171,
+      "frame": [
+        2400,
+        3000
+      ],
+      "anchor": "admin_centre",
+      "ucdbCovered": false,
+      "source": {
+        "snapshot": "badischl-features.json.gz",
+        "snapshotSha256": "21d5c8224c1d7a7de26bfed3bab6b9231d8a0826821fd33223c320fe410f83e4",
+        "snapshotBytes": 360990,
+        "osmBase": "2026-09-04T19:06:51Z"
+      },
+      "packageRawBytes": 74335,
+      "packageBytes": 27453,
+      "packageSha256": "9075aac5dd9e0a14d54c9d2c5777090a4b51f6b02a4f3ad64761bd863464289e",
+      "seconds": {
+        "loadSnapshot": 0.02,
+        "buildPackage": 0.04,
+        "buildShards": 0.0,
+        "total": 0.07
+      },
+      "stats": {
+        "roads": {
+          "1": {
+            "lines": 87,
+            "points": 238
+          },
+          "2": {
+            "lines": 110,
+            "points": 315
+          },
+          "3": {
+            "lines": 335,
+            "points": 1273
+          },
+          "4": {
+            "lines": 1069,
+            "points": 3135
+          }
+        },
+        "rail": {
+          "lines": 34,
+          "points": 97
+        },
+        "water": {
+          "polygons": 4,
+          "points": 192
+        },
+        "waterLines": {
+          "lines": 32,
+          "points": 299
+        },
+        "green": {
+          "polygons": 202,
+          "points": 4097
+        }
+      }
+    }
+  ]
+}

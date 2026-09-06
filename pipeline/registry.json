@@ -1,0 +1,47 @@
+{
+  "cities": {
+    "186579": {
+      "assignedInDirectoryVersion": 1,
+      "cityID": "c00006",
+      "name": "波特兰",
+      "slug": "portland"
+    },
+    "2110264": {
+      "assignedInDirectoryVersion": 1,
+      "cityID": "c00003",
+      "name": "成都市",
+      "slug": "chengdu"
+    },
+    "3221112": {
+      "assignedInDirectoryVersion": 1,
+      "cityID": "c00002",
+      "name": "杭州市",
+      "slug": "hangzhou"
+    },
+    "357794": {
+      "assignedInDirectoryVersion": 1,
+      "cityID": "c00004",
+      "name": "京都市",
+      "slug": "kyoto"
+    },
+    "47811": {
+      "assignedInDirectoryVersion": 1,
+      "cityID": "c00005",
+      "name": "Amsterdam",
+      "slug": "amsterdam"
+    },
+    "68171": {
+      "assignedInDirectoryVersion": 1,
+      "cityID": "c00007",
+      "name": "Bad Ischl",
+      "slug": "badischl"
+    },
+    "913067": {
+      "assignedInDirectoryVersion": 1,
+      "cityID": "c00001",
+      "name": "上海市",
+      "slug": "shanghai"
+    }
+  },
+  "nextSerial": 8
+}
