@@ -1,0 +1,10 @@
+{
+  // 纯静态资源的 Worker：没有代码，只把仓库根目录当文件服务。
+  // Cloudflare 新版把建站入口都收进了 Workers，Pages 的老流程正在退场，
+  // 所以走这条而不是 Pages —— 部署命令 `npx wrangler deploy` 认的就是这份配置。
+  "name": "city-atlas",
+  "compatibility_date": "2026-09-06",
+  "assets": {
+    "directory": "./"
+  }
+}
