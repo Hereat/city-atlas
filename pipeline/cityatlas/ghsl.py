@@ -17,7 +17,20 @@ from pathlib import Path
 
 from .geometry import mollweide_forward, mollweide_inverse
 
-_THEME = "GHSL_UCDB_THEME_GENERAL_CHARACTERISTICS_GLOBE_R2024A"
+# 「总体特征」那张主题表的名字**按模式查，不写死**：UCDB 的各个小版本前缀不一致
+# （V1-0 是 `GHS_UCDB_THEME_…`，另一些版本是 `GHSL_UCDB_THEME_…`），写死会让换一版数据
+# 就整条管线报「no such table」。要的表全库只有一张，模式匹配不会有歧义。
+_THEME_PATTERN = "%UCDB_THEME_GENERAL_CHARACTERISTICS%"
+
+
+def _theme_table(connection) -> str:
+    rows = connection.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE ? AND name NOT LIKE 'rtree_%'",
+        (_THEME_PATTERN,),
+    ).fetchall()
+    if len(rows) != 1:
+        raise ValueError(f"UCDB 里「总体特征」表不是恰好一张：{[r[0] for r in rows]}")
+    return rows[0][0]
 
 
 @dataclass(frozen=True)
@@ -26,6 +39,7 @@ class UrbanCentre:
     name: str
     country: str
     population: float
+    area_km2: float
     lon: float
     lat: float
 
@@ -34,20 +48,32 @@ class UCDB:
     def __init__(self, path: Path) -> None:
         self.path = path
         self.connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        self._theme = _theme_table(self.connection)
         self._centres: list[UrbanCentre] | None = None
 
+    def _centroid_columns(self) -> tuple[str, str]:
+        """质心那两列的名字也随版本变：V1-0 是 `PWCentroidX/Y`（人口加权质心），
+        另一些版本是 `GC_UCC_LON/LAT_2025`。两种都认，认不出就直说是哪个版本不支持。"""
+        columns = {row[1] for row in self.connection.execute('PRAGMA table_info("UC_centroids")')}
+        for x, y in (("PWCentroidX", "PWCentroidY"), ("GC_UCC_LON_2025", "GC_UCC_LAT_2025")):
+            if {x, y} <= columns:
+                return x, y
+        raise ValueError(f"UC_centroids 里认不出质心那两列：{sorted(columns)}")
+
     def centres(self) -> list[UrbanCentre]:
-        """全部 11422 个城市中心。`UC_centroids` 的 LON/LAT 两列名不副实，存的是
-        Mollweide 米，所以这里逐行逆投影；一万一千行一次扫完，不值得为它建索引。"""
+        """全部一万多个城市中心。质心那两列名不副实，存的是 Mollweide 米，
+        所以这里逐行逆投影；一万一千行一次扫完，不值得为它建索引。"""
         if self._centres is None:
+            x_column, y_column = self._centroid_columns()
             rows = self.connection.execute(
-                f"""SELECT t.ID_UC_G0, t.GC_UCN_MAI_2025, t.GC_CNT_GAD_2025, t.GC_POP_TOT_2025,
-                           c.GC_UCC_LON_2025, c.GC_UCC_LAT_2025
-                      FROM {_THEME} AS t
+                f"""SELECT t.ID_UC_G0, t.GC_UCN_MAI_2025, t.GC_CNT_GAD_2025, t.GC_POP_TOT_2025, t.GC_UCA_KM2_2025,
+                           c.{x_column}, c.{y_column}
+                      FROM {self._theme} AS t
                       JOIN UC_centroids AS c ON c.ID_UC_G0 = t.ID_UC_G0"""
             ).fetchall()
             self._centres = [
-                UrbanCentre(r[0], r[1] or "", r[2] or "", r[3] or 0.0, *mollweide_inverse(r[4], r[5]))
+                UrbanCentre(r[0], r[1] or "", r[2] or "", r[3] or 0.0, r[4] or 0.0,
+                            *mollweide_inverse(r[5], r[6]))
                 for r in rows
             ]
         return self._centres
@@ -61,18 +87,35 @@ class UCDB:
         """
         corners = _mollweide_envelope(box)
         rows = self.connection.execute(
-            f"""SELECT t.ID_UC_G0 FROM rtree_{_THEME}_geom AS r
-                  JOIN {_THEME} AS t ON t.fid = r.id
+            f"""SELECT t.ID_UC_G0 FROM rtree_{self._theme}_geom AS r
+                  JOIN {self._theme} AS t ON t.fid = r.id
                  WHERE r.maxx >= ? AND r.minx <= ? AND r.maxy >= ? AND r.miny <= ?""",
             (corners[0], corners[2], corners[1], corners[3]),
         ).fetchall()
         wanted = {row[0] for row in rows}
         return [centre for centre in self.centres() if centre.uc_id in wanted]
 
+    def polygons(self, uc_id: int) -> list[dict]:
+        """城市中心的多边形，WGS-84，形如 `{"o": 外环, "i": [内环…]}`——
+        与 `boundary.Boundary.polygons` 同一个形状，所以归属判定那一路不必分两种来源。
+        """
+        blob = self.connection.execute(
+            f"SELECT geom FROM {self._theme} WHERE ID_UC_G0 = ?", (uc_id,)
+        ).fetchone()[0]
+        return [
+            {"o": [mollweide_inverse(x, y) for x, y in polygon["o"]],
+             "i": [[mollweide_inverse(x, y) for x, y in ring] for ring in polygon["i"]]}
+            for polygon in _wkb_polygons(_strip_gpkg_header(blob))
+        ]
+
+    def centres_in(self, country: str) -> list[UrbanCentre]:
+        """一个国家的全部城市中心。`GC_CNT_GAD_2025` 是 GADM 的国名。"""
+        return [centre for centre in self.centres() if centre.country == country]
+
     def bbox(self, uc_id: int):
         """城市中心多边形的 WGS-84 外接框 `(min_lon, min_lat, max_lon, max_lat)`。"""
         blob = self.connection.execute(
-            f"SELECT geom FROM {_THEME} WHERE ID_UC_G0 = ?", (uc_id,)
+            f"SELECT geom FROM {self._theme} WHERE ID_UC_G0 = ?", (uc_id,)
         ).fetchone()[0]
         points = [mollweide_inverse(x, y) for x, y in _wkb_points(_strip_gpkg_header(blob))]
         lons = [p[0] for p in points]
@@ -142,3 +185,41 @@ def _wkb_points(wkb: bytes) -> list[tuple[float, float]]:
 
     read(0)
     return points
+
+
+def _wkb_polygons(wkb: bytes) -> list[dict]:
+    """(Multi)Polygon → `[{"o": 外环, "i": [内环…]}]`，保留环的层级。
+
+    与 `_wkb_points` 是两个用途：那个只要外接框，把所有点拍平即可；
+    判「这个坐标在不在这座城里」必须分得清外环与洞。
+    """
+    polygons: list[dict] = []
+
+    def read(offset: int) -> int:
+        endian = "<" if wkb[offset] == 1 else ">"
+        raw_type = struct.unpack_from(endian + "I", wkb, offset + 1)[0]
+        if raw_type >= 1000:
+            raise ValueError(f"只支持二维几何，读到类型码 {raw_type}")
+        offset += 5
+        if raw_type == 3:  # Polygon
+            count = struct.unpack_from(endian + "I", wkb, offset)[0]
+            offset += 4
+            rings = []
+            for _ in range(count):
+                n = struct.unpack_from(endian + "I", wkb, offset)[0]
+                offset += 4
+                flat = struct.unpack_from(endian + "%dd" % (n * 2), wkb, offset)
+                rings.append([(flat[i], flat[i + 1]) for i in range(0, n * 2, 2)])
+                offset += n * 16
+            polygons.append({"o": rings[0], "i": rings[1:]})
+            return offset
+        if raw_type in (4, 6, 7):  # MultiPoint / MultiPolygon / Collection
+            count = struct.unpack_from(endian + "I", wkb, offset)[0]
+            offset += 4
+            for _ in range(count):
+                offset = read(offset)
+            return offset
+        raise ValueError(f"城市中心的几何不是面，类型码 {raw_type}")
+
+    read(0)
+    return polygons

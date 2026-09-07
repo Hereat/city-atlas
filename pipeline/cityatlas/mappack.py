@@ -70,6 +70,9 @@ def build(snapshot: dict, *, name: str, name_local: str, center, frame) -> dict:
     half_w, half_h = frame[0] / 2.0, frame[1] / 2.0
     box = (-half_w, -half_h, half_w, half_h)
 
+    # 编码之后同一块面只留一份，见 `_keep_area`。键是**外环**，不含内环。
+    areas_by_outer: dict[bytes, tuple[list, int]] = {}
+
     roads: dict[str, list[list[int]]] = {"1": [], "2": [], "3": [], "4": []}
     rail: list[list[int]] = []
     water_lines: list[dict] = []
@@ -114,7 +117,7 @@ def build(snapshot: dict, *, name: str, name_local: str, center, frame) -> dict:
         for polygon in _polygons(element, projection):
             encoded = _encode_polygon(polygon, box)
             if encoded:
-                target.append(encoded)
+                _keep_area(areas_by_outer, target, encoded)
 
     package = {
         "name": name,
@@ -130,6 +133,34 @@ def build(snapshot: dict, *, name: str, name_local: str, center, frame) -> dict:
     if coastlines:
         package["coastline"] = coastlines
     return package
+
+
+def _keep_area(seen: dict, target: list, encoded: dict) -> None:
+    """同一块面只留一份，**按外环认**；同一个外环出现两次时留内环多的那份。
+
+    去重必须在编码之后，不能在原始坐标上做：OSM 里同一段河岸常被画成两条几乎重合、
+    顶点却不完全相同的线，原始坐标上一个重复都没有；经过简化（容差几米）与整数量化
+    之后，两者塌成完全相同的环（2026-09-07 重庆实测：原始 475 个水面要素零重复，
+    出包后 22 个外环两两相同）。
+
+    为什么非去不可：渲染器按 even-odd 填充，两个完全重叠的多边形互相抵消，
+    那段河于是被填成纸色——长江在图上是一条白带（用户在截图里指出来的就是它）。
+
+    只认外环、不认内环：同一个水塘常被画两遍，一遍画了里面的小岛一遍没画
+    （广州、上海各有几处）。两份的外环相同，内环不同——按整份去重抓不到，
+    而它们在 even-odd 下照样互相抵消。留内环多的那份，岛才不会丢。
+    """
+    key = hashlib.sha1(repr(encoded["o"]).encode()).digest()
+    holes = len(encoded.get("i", []))
+    previous = seen.get(key)
+    if previous is None:
+        seen[key] = (encoded, holes)
+        target.append(encoded)
+        return
+    kept, kept_holes = previous
+    if holes > kept_holes:
+        target[target.index(kept)] = encoded
+        seen[key] = (encoded, holes)
 
 
 def _add_lines(sink: list[list[int]], points, box, tolerance: float) -> None:

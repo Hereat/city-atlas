@@ -4,6 +4,7 @@
     selftest    管线自检：接环、内外环、二进制解析、编码往返、裁剪、投影、落盘确定性
     snapshot    向 Overpass 要各城的边界与要素快照，落盘到 snapshots/
     build       从快照生成 out/ 下的目录分片、地图包、continuity/latest 与索引页
+    country     一个国家一次做完：从区域 pbf 全量读市级边界，切要素、出包、出分片
     compare     生成「稿 vs 管线」并排比对页
     fixtures    把稿的上海、杭州转成 HereatTests/Fixtures/city-atlas/
     report      打印上一次 build 的体积与耗时表
@@ -29,8 +30,8 @@ from . import boundary as boundary_module
 from . import compare as compare_module
 from . import directory as directory_module
 from . import fixtures as fixtures_module
-from . import mappack, overpass, publish, reference, selftest
-from .frame import compute as compute_frame, covering_centres
+from . import mappack, overpass, pbf, publish, reference, selftest
+from .frame import compute as compute_frame, covering_centres, from_admin_and_ghsl
 from .ghsl import UCDB
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -86,7 +87,8 @@ def cmd_snapshot(args) -> None:
         if args.only and city["slug"] not in args.only:
             continue
         boundary = _boundary(city, refresh=args.refresh)
-        frame = compute_frame(boundary, covering_centres(boundary, ucdb))
+        centres = covering_centres(boundary, ucdb)
+        frame = compute_frame(boundary, centres)
         path = ROOT / "snapshots" / f"{city['slug']}-features.json.gz"
         data = overpass.fetch(overpass.feature_query(frame.bounds()), path, refresh=args.refresh)
         # 报一句 OSM 时刻：几个 Overpass 镜像的数据新旧差好几个月，
@@ -94,6 +96,120 @@ def cmd_snapshot(args) -> None:
         print(f"{city['slug']:10s} 画框 {frame.width}×{frame.height} m  锚点 {frame.anchor}  "
               f"要素快照 {human(path.stat().st_size)}  OSM 截至 "
               f"{data.get('osm3s', {}).get('timestamp_osm_base', '未知')}")
+
+
+def cmd_country(args) -> None:
+    """一个国家一次做完：行政边界与街道数据都出自同一份区域 pbf。
+
+    与 `build` 的分别只在**城市名单与边界从哪来**：那边是逐城手写的 `cities.json`
+    加 Overpass 逐城查询，这边是「把区域文件里的市级边界全读出来」。往下——画框、
+    切矢量、压包、分片、索引页——两条路一模一样，所以下游一行都没有为这条路改过。
+    """
+    source = Path(args.pbf)
+    rule = pbf.CITY_LEVELS.get(args.country)
+    if not rule:
+        raise SystemExit(f"{args.country}：不知道这个国家的「市」是第几级，"
+                         f"往 pbf.CITY_LEVELS 里加一行（出处见那里的注释）")
+    levels, suffix = rule["levels"], rule.get("suffix")
+
+    work = ROOT / "work" / args.country.lower().replace(" ", "-")
+    work.mkdir(parents=True, exist_ok=True)
+    ucdb = UCDB(Path(args.ucdb))
+
+    print(f"[1/4] 读 {args.country} 的市级行政边界（admin_level {'/'.join(map(str, levels))}）", flush=True)
+    boundaries_path = pbf.admin_boundaries(source, work / "admin.geojsonseq", levels)
+
+    cities = []
+    for osm_id, tags, polygons in pbf.read_boundaries(boundaries_path):
+        name = tags.get("name:zh") or tags.get("name")
+        if not name:
+            continue
+        if suffix and not name.endswith(suffix):
+            continue
+        cities.append({"name": name,
+                       "name_local": tags.get("name") or name,
+                       "osm_id": osm_id,
+                       "polygons": polygons,
+                       "tags": tags})
+    print(f"      {len(cities)} 座", flush=True)
+    if args.limit:
+        cities = cities[:args.limit]
+        print(f"      --limit {args.limit}，只做前 {len(cities)} 座", flush=True)
+
+    print("[2/4] 算画框（GHSL 城区 ∩ 行政区），默认取景以 OSM 市中心为心", flush=True)
+    places = pbf.city_centres(source, work / "places.geojsonseq")
+    boxes = {}
+    without_centre = []
+    for city in cities:
+        bound = boundary_module.Boundary(
+            osm_relation=city["osm_id"] or 0, admin_level=int(city["tags"].get("admin_level", 0)),
+            name_zh=city["name"], name_local=city["name_local"], polygons=city["polygons"])
+        centres = covering_centres(bound, ucdb)
+        centre = pbf.centre_for(city["name"], bound, places)
+        if centre is None:
+            without_centre.append(city["name"])
+        frame = from_admin_and_ghsl(bound, centres, ucdb, city_centre=centre)
+        city["boundary"] = bound
+        city["frame"] = frame
+        city["slug"] = f"{args.country.lower()[:2]}-{city['osm_id']}"
+        boxes[city["slug"]] = frame.bounds()
+
+    if without_centre:
+        # 报出来而不是静默：这些城的默认取景退回画框中心，可能偏出市中心
+        print(f"      {len(without_centre)} 座没找到 OSM 市中心点，默认取景退回画框中心："
+              f"{'、'.join(without_centre[:8])}{' 等' if len(without_centre) > 8 else ''}", flush=True)
+    print(f"[3/4] 从区域文件切出 {len(boxes)} 座城的要素", flush=True)
+    filtered = pbf.filter_tags(source, work / "features.osm.pbf")
+    extracts = pbf.extract(filtered, boxes, work / "extract")
+
+    print("[4/4] 出包")
+    stamp = pbf.source_stamp(source)
+    print(f"      OSM 截至 {stamp['osmBase']}", flush=True)
+    _emit(cities, extracts, ucdb=ucdb, ghsl=Path(args.ucdb).name, stamp=stamp, out=ROOT / "out")
+
+
+def _emit(cities, extracts, *, ucdb, ghsl, stamp, out) -> None:
+    """出包 + 分片 + 索引页。与 `cmd_build` 的尾巴同一件事，暂各写一份——
+    两条路的产物格式一致之后再合并，先让中国这一轮跑通。"""
+    registry = publish.load_registry(ROOT / "registry.json")
+    ghsl_stamp = {"ghsl": ghsl, "pipeline": "app/tools/CityAtlas"}
+    shard_cities: dict = {}
+    done = 0
+    for city in cities:
+        frame = city["frame"]
+        snapshot = pbf.to_elements(extracts[city["slug"]])
+        city_id = publish.assign(registry, city["osm_id"],
+                                 {"slug": city["slug"], "name": city["name"],
+                                  "assignedInDirectoryVersion": DIRECTORY_VERSION})
+        package = mappack.build(snapshot, name=city["name"], name_local=city["name_local"],
+                                center=frame.center, frame=frame.size)
+        package.update({
+            "cityID": city_id,
+            "directoryVersion": DIRECTORY_VERSION,
+            "mapDataVersion": MAP_DATA_VERSION,
+            "bounds": list(frame.bounds()),
+            "defaultView": frame.default_view,
+            "contentHash": mappack.content_hash(package),
+            "license": publish.license_block({**ghsl_stamp, **stamp}),
+        })
+        path = out / "package" / city_id / f"{MAP_DATA_VERSION}.json.gz"
+        publish.write_gzip_json(path, package)
+        entry = {"cityID": city_id, "name": city["name"], "nameLocal": city["name_local"],
+                 "mapDataVersion": MAP_DATA_VERSION, "center": package["center"],
+                 "frame": package["frame"], "bounds": package["bounds"]}
+        for cell, shard_entry in directory_module.entries(entry, city["boundary"]).items():
+            shard_cities.setdefault(cell, []).append(shard_entry)
+        done += 1
+        if done % 50 == 0 or done == len(cities):
+            print(f"      {done}/{len(cities)}", flush=True)
+    publish.save_registry(registry, ROOT / "registry.json")
+
+    licenses = publish.license_block(ghsl_stamp)
+    for cell, entries in sorted(shard_cities.items()):
+        path = out / "directory" / f"v{DIRECTORY_VERSION}" / f"{directory_module.cell_name(cell)}.json.gz"
+        publish.write_gzip_json(path, directory_module.shard(cell, entries, licenses))
+    _write_json(out / "directory" / "latest.json", publish.latest(DIRECTORY_VERSION, ghsl_stamp))
+    print(f"      分片 {len(shard_cities)} 个", flush=True)
 
 
 def cmd_build(args) -> None:
@@ -119,7 +235,8 @@ def cmd_build(args) -> None:
             continue
         started = time.monotonic()
         boundary = _boundary(city)
-        frame = compute_frame(boundary, covering_centres(boundary, ucdb))
+        centres = covering_centres(boundary, ucdb)
+        frame = compute_frame(boundary, centres)
         city_id = publish.assign(registry, boundary.osm_relation,
                                  {"slug": city["slug"], "name": boundary.name_zh,
                                   "assignedInDirectoryVersion": DIRECTORY_VERSION})
@@ -277,6 +394,13 @@ def main() -> None:
         command.add_argument("--ucdb", required=True, help="GHS_UCDB_GLOBE_R2024A.gpkg 的路径")
         command.add_argument("--only", nargs="*", help="只跑这几个 slug")
         command.set_defaults(handler=handler)
+
+    country = sub.add_parser("country")
+    country.add_argument("--country", required=True, help="GADM 国名，如 China")
+    country.add_argument("--pbf", required=True, help="Geofabrik 的区域 .osm.pbf")
+    country.add_argument("--ucdb", required=True, help="GHS_UCDB_GLOBE_R2024A.gpkg 的路径")
+    country.add_argument("--limit", type=int, default=0, help="只做前 N 座，用来先跑通")
+    country.set_defaults(handler=cmd_country)
 
     compare = sub.add_parser("compare")
     compare.add_argument("slug", help="reference/cities/ 里有数据的城（shanghai 或 hangzhou）")
