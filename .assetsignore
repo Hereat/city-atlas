@@ -3,3 +3,4 @@
 # 既浪费 Workers 的文件配额，也让仓库内部对象出现在公网路径上。
 .git
 .assetsignore
+.wrangler

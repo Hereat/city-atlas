@@ -50,10 +50,13 @@ for (const [label, city] of CITIES) {
 """
 
 
-def write(root: Path, slug: str, city_id: str, style: str = "plain") -> Path:
+def write(root: Path, slug: str, city_id: str, style: str = "plain", *, out_dir: str = "out-sample") -> Path:
+    """稿与管线并排。取的是 `out-sample/` 里 `build` 出的那份，不是发布目录 `out/`——
+    稿的画框是固定的 6 × 7.5 km，而发布目录里的上海已经是 72.5 × 68 km 的全市框，
+    并排看没有意义。"""
     engine = (root / "reference" / "citymap.js").read_text(encoding="utf-8")
     drafted = json.loads((root / "reference" / "cities" / f"{slug}.json").read_text(encoding="utf-8"))
-    package_path = root / "out" / "package" / city_id / f"{MAP_DATA_VERSION}.json.gz"
+    package_path = root / out_dir / "package" / city_id / f"{MAP_DATA_VERSION}.json.gz"
     with gzip.open(package_path, "rt", encoding="utf-8") as handle:
         built = json.load(handle)
     pairs = [["稿", _thin(drafted)], ["管线", _thin(built)]]
@@ -63,7 +66,7 @@ def write(root: Path, slug: str, city_id: str, style: str = "plain") -> Path:
         "cities": json.dumps(pairs, ensure_ascii=False, separators=(",", ":")),
         "style": json.dumps(style),
     }
-    out = root / "out" / f"compare-{slug}.html"
+    out = root / out_dir / f"compare-{slug}.html"
     out.write_text(page, encoding="utf-8")
     return out
 

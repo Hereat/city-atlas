@@ -142,4 +142,93 @@ def run() -> None:
     _assert(blob() == blob(), "同一份内容两次 gzip 结果不同——mtime 没写死")
     checks += 1
 
+    checks += _incremental_shards()
+    checks += _shard_tie_break()
+
     print(f"selftest 通过，{checks} 条")
+
+
+def _shard_tie_break() -> int:
+    """平局取最小的那座城。
+
+    地级市把下辖的县级市整个包住，一个起点因此同时落在两座城里，而 App 取分片里
+    第一个包含它的。先前按 `cityID`（发号顺序）排，义乌的散步全归了金华。
+    """
+    from . import directory as directory_module
+    from .boundary import Boundary
+
+    def rectangle(city_id, name, half):
+        polygons = [{"o": [(120 - half, 29 - half), (120 + half, 29 - half),
+                           (120 + half, 29 + half), (120 - half, 29 + half)], "i": []}]
+        boundary = Boundary(osm_relation=0, admin_level=0, name_zh=name, name_local=name,
+                            polygons=polygons)
+        city = {"cityID": city_id, "name": name, "nameLocal": name, "mapDataVersion": 1,
+                "center": [120.0, 29.0], "frame": [6000, 7500], "bounds": [0, 0, 0, 0]}
+        return directory_module.entries(city, boundary)[(29, 120)]
+
+    # 大的先发号（现实里就是这样：地级市在名单里排在它下辖的县级市前面）
+    big = rectangle("c00187", "金华市", 0.4)
+    small = rectangle("c00310", "义乌市", 0.1)
+    shard = directory_module.shard((29, 120), [big, small], {"pipeline": "selftest"})
+    _assert([city["name"] for city in shard["cities"]] == ["义乌市", "金华市"],
+            "分片里大城排在了小城前面——起点落在两座城里时会归给大的那座")
+    _assert(small["areaKm2"] < big["areaKm2"], "面积算反了")
+    return 2
+
+
+def _incremental_shards() -> int:
+    """增量出包：跑第二个国家不许动第一个。
+
+    这是最贵的一类静默错误——产物照常生成、体积正常，只是上一个国家的城
+    从目录里消失了，而那要等用户打开 App 发现自己的城不见了才知道。
+    """
+    import tempfile
+    from pathlib import Path
+
+    from . import directory as directory_module, publish
+    from .__main__ import _write_shards
+
+    licenses = {"pipeline": "selftest"}
+
+    def entry(city_id, name, area_km2=1.0):
+        return {"cityID": city_id, "name": name, "nameLocal": name, "areaKm2": area_km2}
+
+    def cities_in(out, cell):
+        path = out / "directory" / f"v{directory_module.DIRECTORY_VERSION}" / f"{directory_module.cell_name(cell)}.json.gz"
+        if not path.exists():
+            return []
+        import gzip as _gzip, json as _json
+        with _gzip.open(path, "rt", encoding="utf-8") as handle:
+            return [city["cityID"] for city in _json.load(handle)["cities"]]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp)
+        china, japan = (31, 121), (35, 139)
+        shared = (43, 131)          # 中俄边境那种两国共用的格子
+
+        # 第一国
+        _write_shards(out, {china: [entry("c1", "上海")], shared: [entry("c2", "珲春")]},
+                      mine={"c1", "c2"}, licenses=licenses)
+        # 第二国：只写自己的格子，其中一个与第一国共用
+        _write_shards(out, {japan: [entry("c3", "東京")], shared: [entry("c4", "稚内")]},
+                      mine={"c3", "c4"}, licenses=licenses)
+        _assert(cities_in(out, china) == ["c1"], "跑第二个国家把第一个国家的格子弄没了")
+        _assert(cities_in(out, shared) == ["c2", "c4"], "共用格子没有把两国的城并在一起")
+        _assert(cities_in(out, japan) == ["c3"], "第二个国家自己的格子没写出来")
+
+        # 第一国重跑：c2 退役、c1 搬到别的格子
+        moved = (30, 120)
+        _write_shards(out, {moved: [entry("c1", "上海")]}, mine={"c1", "c2"}, licenses=licenses)
+        _assert(cities_in(out, china) == [], "搬走之后旧格子该被删掉")
+        _assert(cities_in(out, moved) == ["c1"], "搬到新格子没写出来")
+        _assert(cities_in(out, shared) == ["c4"], "退役的城没有从共用格子里摘走，或者把别国的城误伤了")
+        _assert(cities_in(out, japan) == ["c3"], "第一国重跑动了第二国的格子")
+
+    # 名册：号不变，但 country 每轮刷新——退役判定靠它
+    registry = {"nextSerial": 1, "cities": {}}
+    first = publish.assign(registry, 100, {"name": "上海", "country": "China"})
+    again = publish.assign(registry, 100, {"name": "上海市", "country": "China"})
+    _assert(first == again == "c00001", "同一个 OSM id 派了两个号")
+    _assert(registry["cities"]["100"]["name"] == "上海", "名册的既有字段被改写了")
+    _assert(registry["cities"]["100"]["country"] == "China", "country 没有被刷新")
+    return 8

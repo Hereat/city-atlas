@@ -63,8 +63,13 @@ def assign(registry: dict, osm_relation: int, note: dict) -> str:
     「`cityID` 不从外部对象 ID 派生」——派生的是号，认人的是键，两回事。
     """
     key = str(osm_relation)
-    if key in registry["cities"]:
-        return registry["cities"][key]["cityID"]
+    existing = registry["cities"].get(key)
+    if existing is not None:
+        # 号是不动的，但 `country` 每轮刷新：它不是这座城的身份，是「上一次是谁出的包」，
+        # 增量出包靠它认出「这一国这次没再产出的城」（见 `__main__._emit`）。
+        if "country" in note:
+            existing["country"] = note["country"]
+        return existing["cityID"]
     city_id = "c%05d" % registry["nextSerial"]
     registry["nextSerial"] += 1
     registry["cities"][key] = {"cityID": city_id, **note}

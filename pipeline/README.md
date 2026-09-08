@@ -13,17 +13,33 @@
 cd app/tools/CityAtlas
 UCDB=~/Downloads/GHS_UCDB_GLOBE_R2024A.gpkg
 
-python3 -m cityatlas selftest                 # 24 条自检，一秒跑完，不联网
+python3 -m cityatlas selftest                 # 34 条自检，一秒跑完，不联网
 python3 -m cityatlas reference                # 从设计稿 HTML 解包出 CityMap 参考实现
 python3 -m cityatlas snapshot --ucdb $UCDB    # 向 Overpass 要边界与要素快照 → snapshots/
-python3 -m cityatlas build    --ucdb $UCDB    # 只读快照，生成 out/ 与 report.json
+python3 -m cityatlas build    --ucdb $UCDB    # 只读快照，生成 out-sample/ 与 report.json
 python3 -m cityatlas report                   # 打印上一次 build 的体积与耗时表
-python3 -m cityatlas compare shanghai         # 「稿 vs 管线」并排比对页 → out/
+python3 -m cityatlas compare shanghai         # 「稿 vs 管线」并排比对页 → out-sample/
 python3 -m cityatlas fixtures                 # 稿的上海、杭州 → HereatTests/Fixtures/city-atlas/
 ```
 
-`--only shanghai hangzhou` 限定城市（`build --only` 只出包，不重写分片与索引页——
-按半份城市重写全局产物会静默丢掉别的城）；`snapshot --refresh` 忽略缓存重新联网。
+**发布用的是 `country`，一个国家一轮**（`build` 只剩「Overpass 那条路的对照」这一个用途）：
+
+```bash
+PBF=~/Downloads/japan-latest.osm.pbf          # Geofabrik 的区域包
+python3 -m cityatlas country --country Japan --pbf $PBF --ucdb $UCDB
+python3 -m cityatlas review  --country Japan  # 跑完的取证页 → out/review-japan.html
+```
+
+补一个新国家要先往 `pbf.CITY_LEVELS` 加一行（哪几级、哪一级是覆盖层、名字怎么筛、
+现役的带什么标签），那里的注释写了怎么定。`country --only 上海 杭州` 或 `--limit 20`
+可以先跑通几座，但那时**不会重写分片**——按半份名单重写全局产物会静默丢掉别的城。
+
+跑完必核三件（`review` 那一页就是为它们出的）：名单里有没有非城市、有没有城的画框落在
+离城区十几公里外、有没有零字节的切片。日本那一轮三件全中，见
+[实施文档的 S7](../../../docs/散步/2026-09-06-散步城市图-全球覆盖与缩放-实施.md)。
+
+**两轮不能同时跑。** `out/` 与 `registry.json` 是全球共用的：名册是全量重写，分片是
+「读盘上已有的再合并」，并发跑会互相丢号丢城。同一台机器上有别的 session 时先对顺序。
 
 **抓取与生成是分开的两步**：快照一旦落盘，`build` 就只读文件不联网。
 「同一输入重跑逐字节相同」这条验收因此可核：gzip 的 mtime 写死 0、JSON 的键排序固定，
@@ -41,8 +57,10 @@ python3 -m cityatlas fixtures                 # 稿的上海、杭州 → Hereat
 | `cities.json` | 七座样本城的定义：OSM 上的 `name`、要试的 `admin_level`、找它用的经纬窗口 |
 | `registry.json` | `cityID` 名册。产品自分配、永不复用、不从任何外部对象 ID 派生——这个文件就是那句话的载体 |
 | `reference/` | 从设计稿解包出来的 `CityMap` 引擎、两座城的数据、八套样式表，以及把包画出来的 `preview.html` |
-| `snapshots/` | Overpass 快照（gzip JSON），管线的**唯一输入** |
-| `out/` | 产物：`directory/`、`package/`、`index.html` |
+| `snapshots/` | Overpass 快照（gzip JSON），`build` 那条路的输入 |
+| `out/` | 发布产物：`directory/`、`package/`、`index.html`、`review-*.html`。**不进仓库**（几百兆、可再生） |
+| `out-sample/` | `build` 那条路的产物，只作对照，与 `out/` 不争 `cityID` |
+| `~/Library/Caches/cityatlas/` | 区域 pbf 的中间产物（`cityatlas.WORK`）。**故意放在仓库外**：几个 GB、上千个文件、全可再生，而仓库一度在 iCloud 同步里，切片被拖慢十倍 |
 | `report.json` | 上一次 `build` 的体积与耗时，PRD 第 6 节的数字从这里来 |
 
 模块各管一件事：`geometry`（投影、简化、裁剪，零依赖）、`codec`（增量整数米编码）、
@@ -109,9 +127,11 @@ UCDB 按 CC BY 4.0 发布（© European Union），署名义务与 ODbL 并列�
 
 ## 已知缺口
 
-* **岸线**：`natural=coastline` 是一条线，把它闭合成海面多边形需要沿画框边界接边。
-  管线目前把它按线存进包的 `coastline` 一列，不闭合成面；七座样本城的画框里没有出现岸线，
-  所以本版没有为它写那五十行。真正沿海的城市（例如把画框放到外滩以东）进目录之前必须补上。
+* ~~**岸线**~~ **2026-09-07 补上，但补在 App 侧，管线一行没改**：`natural=coastline` 仍按线
+  存进包的 `coastline` 一列，闭合成海面由 `CityCoastline`（App）在解包时做。放这一头是因为
+  它是同一段几何，而放进管线要重跑一遍全国、重传八十五兆，只为换一个解包时算得出来的东西。
+  接链、去重、沿画框顺时针闭合、岛按原绕向挖洞——四步与踩过的坑记在
+  [09-06 全球覆盖实施 S6](../../../docs/散步/2026-09-06-散步城市图-全球覆盖与缩放-实施.md)。
 * **目录分片的完整性**：分片里只有 `cities.json` 列出的城市。真正的目录要能回答
   「这一格里所有的城」，那需要按格扫描全球的 `admin_level` 边界，并解决市级层号各国不同
   （中国 4 / 5，日本 7，荷兰与美国 8）这件事。本版是七座样本城的管线，不是全球目录。

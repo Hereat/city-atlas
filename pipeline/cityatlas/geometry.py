@@ -295,3 +295,21 @@ def ring_area(ring: list[tuple[float, float]]) -> float:
         x1, y1 = ring[(i + 1) % n]
         total += x0 * y1 - x1 * y0
     return abs(total) / 2.0
+
+
+def polygon_area_km2(polygons: list[dict]) -> float:
+    """一组 `{"o": 外环, "i": [内环…]}` 的总面积，平方公里。
+
+    逐块按自己那块的纬度换算度→米：中国南北跨三十五个纬度，一度经度在漠河与三亚
+    差着近一倍，用一个全局比例尺会把北方的城算小。分片的平局规则要拿它比大小
+    （见 `directory.shard`），所以算的是真实面积而不是 `ring_area` 那个度²的量。
+    """
+    total = 0.0
+    for polygon in polygons:
+        outer = polygon["o"]
+        if len(outer) < 3:
+            continue
+        lon_meters, lat_meters = meters_per_degree(sum(y for _, y in outer) / len(outer))
+        square_km = lon_meters * lat_meters / 1e6
+        total += (ring_area(outer) - sum(ring_area(hole) for hole in polygon["i"])) * square_km
+    return total

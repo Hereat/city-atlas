@@ -1,0 +1,2 @@
+# wrangler 的本地缓存，里面有账户 id 与账户名，不进仓库也不上公网（另见 .assetsignore）
+.wrangler/

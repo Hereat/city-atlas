@@ -35,7 +35,7 @@ from dataclasses import dataclass
 
 import math
 
-from .geometry import meters_per_degree
+from .geometry import meters_per_degree, point_in_polygon
 
 # 详情图的比例：稿 1a 的图 462 pt 高、版心 353 pt 宽，4:5。列表缩略图是它中央的一段裁切。
 ASPECT = 1.25
@@ -50,6 +50,15 @@ SHORT_MIN = 2400
 # 短边取整到这个刻度，免得出现 8137 m 这种没人能复述的数。
 SHORT_STEP = 500
 
+# GHSL 没覆盖到城区、但 OSM 说这儿有座城时，以市中心为心给的画框（米，短边）。
+#
+# 中国有 81 座这样的城（2026-09-07 实测）：涪陵城区几十万人，GHSL R2024A 里却没有
+# 任何建成区覆盖它，最近的一片在二十二公里外。这时候不能退回「这座城辖内最大的那片
+# 建成区」——那会把画框放到二十公里外的农田上，图上一条街都没有（用户在图上指出的
+# 就是涪陵与崇明这两张）。GHSL 说「这里不算城市中心」，OSM 说「这儿有座城」，
+# 后者更可信：这个数按县级市城区的常见尺度取，宁可略大也不要指错地方。
+UNCOVERED_SHORT = 10000
+
 # 默认取景占「等面积短边」的比例，以及它的下限（米）。
 #
 # 默认那一眼不能是整个数据范围（上海 75 km，散步缩成中间一小簇），也不能按用户自己的
@@ -59,7 +68,9 @@ SHORT_STEP = 500
 # 下限是给小城的：GHSL 的面积中位数只有 23 km²（等面积短边 4.3 km），90% 分位 8.9 km，
 # 绝大多数城市本来就小，再乘 0.35 会缩到看不见。夹住之后小城默认就是它的全貌。
 DEFAULT_FRACTION = 0.35
-DEFAULT_MIN = 4000
+# 下限从 4 km 提到 6 km：小城的画框本来就只有十几公里，0.35 一乘再被 4 km 夹住，
+# 打开第一眼只剩市中心几条街，认不出是哪儿（2026-09-07 用户看万州、永川时指出）。
+DEFAULT_MIN = 6000
 
 @dataclass(frozen=True)
 class Frame:
@@ -160,6 +171,32 @@ def from_urban_centre(centre, polygons) -> Frame:
                  default, (centre.lon - lon) * mx, (centre.lat - lat) * my)
 
 
+# 量「这片建成区与这座城重叠在哪」时，一副轮廓上取样多少个点。
+# 画框的短边最后要取整到 500 m，取样密到毫米没有意义；这个数是「够定出外接框」的量。
+OVERLAP_SAMPLES = 300
+
+
+def overlap_points(polygons, boundary) -> list:
+    """这片建成区与这座城重叠处的取样点。**两副轮廓各取落在对方里的那些。**
+
+    只取建成区那一副是不够的：一座整个躺在连片建成区**内部**的城，建成区的轮廓
+    一个点都不落在它界内，量出来只有边界擦过的那一小段——东京圈里的町田市因此
+    拿到 2 × 2 km、大阪市 2 × 7 km、横滨市 6 × 13 km（2026-09-07 日本这一轮实测）。
+    中国没露出这个毛病，是因为地级市的地盘普遍比一片建成区大，轮廓总会穿过去。
+
+    只取行政边界那一副也不行：深圳会拿到整个市域，包括东边那片山。
+    两边都取，外接框正是「这座城的建成区」——这也正是拍板 27 那句「GHSL 说建成区
+    在哪、行政边界说哪一片属于这座城」的字面意思。
+    """
+    points = [point for polygon in polygons for point in polygon["o"]
+              if boundary.contains(point)]
+    for ring in (polygon["o"] for polygon in boundary.polygons):
+        step = max(1, len(ring) // OVERLAP_SAMPLES)
+        points += [point for point in ring[::step]
+                   if any(point_in_polygon(point, polygon) for polygon in polygons)]
+    return points
+
+
 def from_admin_and_ghsl(boundary, centres, ucdb, city_centre=None) -> Frame:
     """行政边界 + GHSL：**画框取「GHSL 城区落在这座城行政区内的那部分」的外接框**。
 
@@ -171,31 +208,65 @@ def from_admin_and_ghsl(boundary, centres, ucdb, city_centre=None) -> Frame:
     GHSL 覆盖不到的地方（山里的小城、低于五万人的镇）没有建成区可交，退回
     `MIN_SHORT_SIDE`：那种地方本来就不需要几十公里的画框。
     """
-    # **只取占这座城最多的那一片建成区**，不是所有相交城区的并集。
+    # **只取一片建成区**，不是所有相交城区的并集：地级市的辖区里散着许多互不相连的镇，
+    # 各自都是 GHSL 的城市中心，取并集会让渭南市拿到 139 × 116 km 的画框
+    # （2026-09-06 实测），画的是整个渭南地区而不是渭南这座城。
     #
-    # 地级市的辖区里散着许多互不相连的镇，各自都是 GHSL 的城市中心：取并集，渭南市会拿到
-    # 139 × 116 km 的画框（2026-09-06 实测），画的是整个渭南地区而不是渭南这座城。
-    # 城市图要画的是这座城。
+    # 取哪一片，**优先看市中心落在哪一片里**。只按大小挑会挑错：崇明区辖内最大的一片
+    # 建成区在长兴岛（造船厂那带），涪陵区辖内最大的一片在惠民一带的乡镇，两座城的画框
+    # 因此落在了离城区十几二十公里的农田上（2026-09-07 用户在图上指出）。
     #
-    # 判据是「这片建成区有多少落在这座城里」，估法是**总面积 × 落在界内的点的比例**。
-    #
-    # 不能按整片的面积挑：连片都市区里，深圳境内那块属于 GHSL 的「广州」（6454 km²），
-    # 按整片面积挑会挑中它，按质心在不在界内又一个都挑不着。
-    #
-    # 也不能按「裁完剩多少点」挑：GHSL 的多边形是网格生成的，**点数跟周长走、不跟面积走**，
-    # 一条沿海的细长带周长大、点多，会赢过紧凑的主城——宁波就是这么拿到 58 × 17.5 km 的
-    # 细长画框的（2026-09-07 实测）。乘上比例之后，宁波主城 523 km² 胜过慈溪 339 km²。
-    best, inside = 0.0, []
-    for centre in centres:
-        points = [point for polygon in ucdb.polygons(centre.uc_id) for point in polygon["o"]]
-        if not points:
-            continue
-        within = [point for point in points if boundary.contains(point)]
-        if not within:
-            continue
-        share = centre.area_km2 * len(within) / len(points)
-        if share > best:
-            best, inside = share, within
+    # 没有市中心可依时（自治州与盟的名字对不上 OSM 的 place 节点，中国有 69 座）退回
+    # 「占这座城最多的那一片」。那一步的判据是**总面积 × 落在界内的点的比例**：
+    # 不能按整片面积挑——深圳境内那块属于 GHSL 的「广州」（6454 km²），按面积挑会挑中
+    # 整个珠三角；也不能按裁完剩多少点挑——GHSL 的多边形是网格生成的、点数跟周长走，
+    # 一条沿海细长带会赢过紧凑的主城（宁波实测拿到 58 × 17.5 km 的细长画框）。
+    inside = []
+    if city_centre is not None:
+        for centre in centres:
+            polygons = ucdb.polygons(centre.uc_id)
+            if not any(point_in_polygon(city_centre, polygon) for polygon in polygons):
+                continue
+            within = overlap_points(polygons, boundary)
+            if within:
+                inside = within
+                break
+
+    # 市中心在、但没有任何建成区覆盖它：以市中心为心给一个默认框。
+    # 退回「辖内最大的那片」会把画框放到几十公里外（见 `UNCOVERED_SHORT` 的注释）。
+    if not inside and city_centre is not None:
+        short = UNCOVERED_SHORT
+        height = int(short * ASPECT)
+        default = max(DEFAULT_MIN, int(round(short * DEFAULT_FRACTION / SHORT_STEP) * SHORT_STEP))
+        return Frame(round(city_centre[0], 6), round(city_centre[1], 6), short, height,
+                     "osm-centre", False, min(default, short), 0.0, 0.0)
+
+    if not inside:
+        best = 0.0
+        for centre in centres:
+            polygons = ucdb.polygons(centre.uc_id)
+            points = [point for polygon in polygons for point in polygon["o"]]
+            if not points:
+                continue
+            within = [point for point in points if boundary.contains(point)]
+            if not within:
+                continue
+            share = centre.area_km2 * len(within) / len(points)
+            if share > best:
+                best, inside = share, overlap_points(polygons, boundary)
+
+    # 整座城躺在一片建成区**内部**：那片建成区的轮廓一个点都不落在界内，上面那一轮
+    # 挑不出任何一片，而这座城明明整个都是建成区。东京圈与大阪圈里没有 `place` 节点
+    # 的特别区就是这样（新宿区、涩谷区，2026-09-07 日本这一轮实测：不接这条会退到
+    # `admin-bbox`，18 km² 的新宿区拿到 2.4 km 的画框）。
+    if not inside:
+        centre_point = ((boundary.bbox[0] + boundary.bbox[2]) / 2,
+                        (boundary.bbox[1] + boundary.bbox[3]) / 2)
+        for centre in sorted(centres, key=lambda c: -c.area_km2):
+            polygons = ucdb.polygons(centre.uc_id)
+            if any(point_in_polygon(centre_point, polygon) for polygon in polygons):
+                inside = overlap_points(polygons, boundary)
+                break
 
     if not inside:
         box = boundary.bbox
@@ -264,3 +335,81 @@ def covering_centres(boundary, ucdb) -> list:
     质心判据会答「没有城市中心」，而它们显然是城市。
     """
     return ucdb.centres_intersecting(boundary.bbox)
+
+
+# ---------- 城市名单：一片建成区 = 一座城 ----------
+#
+# 先前一版的名单是「市级行政单位」（中国 289 座地级市与直辖市）。它漏掉了辖区里那些
+# **与主城不相连**的建成区：289 座里有 269 座辖区内还有别的成片城镇，一共 1512 片
+# （2026-09-07 实测）。在涪陵、慈溪、常熟散步会归到重庆、宁波、苏州，而那些地方落在
+# 主城画框之外，图上什么都没有。
+#
+# 名单由两部分合成：
+#
+#   1. **每个有建成区的地级市与直辖市**（289 座，就是上一版的名单）。这一半保证覆盖
+#      不丢，也保证连片都市区不会塌成一个名字——珠三角跨广州、深圳、佛山、东莞四个市，
+#      没有任何单一单位包得住它，只靠「最小包含单位」会把整片安到其中一家头上
+#      （实测安给了东莞，6454 km²）。
+#   2. **完整包住一片独立建成区、且不属于任何主城的区县**。这一半把远郊捞出来：
+#      涪陵、万州、慈溪、常熟那些与主城不相连的城镇。
+#
+# 于是重庆主城仍叫「重庆市」（横跨多个区，没有区包得住它），而涪陵那片整个落在涪陵区
+# 之内、且涪陵区的地盘上没有重庆主城，所以另立一座「涪陵区」。
+
+def smallest_containing(probe, units, *, coverage: float = 0.95):
+    """完整包住这些点的最小行政单位；没有就退回覆盖比例最大的那个。
+
+    「完整包住」而不是「质心落在里面」：按质心判，重庆主城的质心落在某个区里，
+    整片主城就会被命名成那个区。
+    """
+    full = None
+    best_share, best = 0.0, None
+    for unit in units:
+        box = unit["bbox"]
+        if not any(box[0] <= x <= box[2] and box[1] <= y <= box[3] for x, y in probe):
+            continue
+        share = sum(1 for point in probe if unit["boundary"].contains(point)) / len(probe)
+        if share >= coverage and (full is None or unit["area"] < full["area"]):
+            full = unit
+        if share > best_share:
+            best_share, best = share, unit
+    return full or best
+
+
+def drop_swallowed(entries, cover_levels):
+    """剔掉「已经是别座城主城的一部分」的区县。
+
+    浦东新区里有临港这种与主城不相连的建成区，于是整个浦东被当成一座城——可浦东同时
+    又是上海主城的一部分，图上会出现两座重叠的「城」。
+
+    两条约束，都是被反例逼出来的：
+
+    * **只有候补层（不在 `cover_levels` 里的那些）会被剔**。不加这条，珠三角那片连绵建成区会
+      把地盘与它重叠的**广州市、苏州市、嘉兴市**一并剔掉——它们是正经的地级市，
+      不是谁的一部分（2026-09-07 实测，误剔 161 座里有一批是这种）。
+    * **判据是地理事实，不是行政级别**。按「区一律不独立」会误伤涪陵、万州、永川、
+      江津——它们全是市辖区，而辖区里没有任何一片属于重庆主城。
+
+    `entries` 按建成区面积从大到小给，大的先占。
+    """
+    kept = []
+    for entry in entries:
+        unit = entry["unit"]
+        if unit["level"] in cover_levels:
+            kept.append(entry)          # 覆盖层（中国的地级市与直辖市）不被吞并
+            continue
+        box = unit["bbox"]
+        swallowed = False
+        for bigger in kept:
+            other = bigger["box"]
+            # 外接框不相交就不可能吞并，先筛一道：不筛是 1500 座两两判断，跑十八分钟
+            if other[2] < box[0] or other[0] > box[2] or other[3] < box[1] or other[1] > box[3]:
+                continue
+            if bigger["unit"]["osm_id"] == unit["osm_id"]:
+                continue
+            if any(unit["boundary"].contains(point) for point in bigger["probe"][::4]):
+                swallowed = True
+                break
+        if not swallowed:
+            kept.append(entry)
+    return kept

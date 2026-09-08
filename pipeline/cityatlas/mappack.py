@@ -149,18 +149,22 @@ def _keep_area(seen: dict, target: list, encoded: dict) -> None:
     只认外环、不认内环：同一个水塘常被画两遍，一遍画了里面的小岛一遍没画
     （广州、上海各有几处）。两份的外环相同，内环不同——按整份去重抓不到，
     而它们在 even-odd 下照样互相抵消。留内环多的那份，岛才不会丢。
+
+    记的是「这个外环放进了**哪个 target 的第几位**」，不能只记对象本身：水面与绿地是
+    两个列表，同一个外环可能先作为绿地进来、再作为水面出现，那时拿着绿地那份去水面
+    列表里找位置会直接抛错（2026-09-07 全国出包跑到第 577 座炸在这儿）。
     """
     key = hashlib.sha1(repr(encoded["o"]).encode()).digest()
     holes = len(encoded.get("i", []))
     previous = seen.get(key)
     if previous is None:
-        seen[key] = (encoded, holes)
+        seen[key] = (target, len(target), holes)
         target.append(encoded)
         return
-    kept, kept_holes = previous
+    kept_target, index, kept_holes = previous
     if holes > kept_holes:
-        target[target.index(kept)] = encoded
-        seen[key] = (encoded, holes)
+        kept_target[index] = encoded
+        seen[key] = (kept_target, index, holes)
 
 
 def _add_lines(sink: list[list[int]], points, box, tolerance: float) -> None:

@@ -4,5 +4,25 @@
 都从这里取，不各存一份手动同步。
 """
 
-DIRECTORY_VERSION = 1
+from pathlib import Path
+
+# v2（2026-09-08）三件事一起发：
+# * 分片里的城市改按面积排，平局取最小的那座（`directory.shard`）——先前按 cityID
+#   （发号顺序）排，义乌的散步归了金华；
+# * 画框改按两副轮廓求重叠（`frame.overlap_points`），中国 45 座变大，其余逐字不变；
+# * 中文名统一走 `boundary.chinese_name`，认出了繁体名与名字后挂蒙文的那些，名单 1458 → 1462。
+#
+# 升版本的硬理由是**换掉分片的 URL**——App 的分片缓存永不过期，不换路径，
+# 已经存过旧顺序的手机再也拿不到新答案。
+DIRECTORY_VERSION = 2
 MAP_DATA_VERSION = 1
+
+
+# 区域 pbf 的中间产物放**仓库外**：过完标签的整国文件、每座城切出来的小 pbf，
+# 一个国家几个 GB、上千个文件，而且全都可再生。
+#
+# 不是洁癖。这台机器的仓库一度在 iCloud 的「桌面与文档」同步里：切日本那 1739 座时，
+# iCloudDriveCore 一直在同步这批临时文件，占掉 55–70% 的 CPU，osmium 只剩 40%，
+# 一批从两分钟拖到二十分钟（2026-09-08 实测）。`~/Library/Caches` 正是「可再生的
+# 中间产物」该待的地方——不同步、不进备份，系统缺盘时清掉也只是重跑一次 `country`。
+WORK = Path.home() / "Library/Caches/cityatlas"
