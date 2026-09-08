@@ -12,7 +12,7 @@ import json
 
 from . import codec
 from .geometry import (Projection, assemble_polygons, clip_polyline, clip_ring,
-                       ring_area, simplify, stitch_rings)
+                       point_in_polygon, ring_area, simplify, stitch_rings)
 
 # 四档道路。分档看的是「这条路在一张城市图上该有多粗」，不是 OSM 的功能分类本身：
 # 一档是穿城的骨架，二档是区与区之间，三档是住得进人的街，四档是前三档之外还画得出来的
@@ -119,6 +119,9 @@ def build(snapshot: dict, *, name: str, name_local: str, center, frame) -> dict:
             if encoded:
                 _keep_area(areas_by_outer, target, encoded)
 
+    # 水面要等整趟遍历跑完才齐全，所以这一步不能放进循环里
+    water_lines = _drop_lines_inside_water(water_lines, water_areas)
+
     package = {
         "name": name,
         "nameLocal": name_local,
@@ -133,6 +136,35 @@ def build(snapshot: dict, *, name: str, name_local: str, center, frame) -> dict:
     if coastlines:
         package["coastline"] = coastlines
     return package
+
+
+def _drop_lines_inside_water(water_lines: list[dict], water_areas: list[dict]) -> list[dict]:
+    """两端都落在水面之内的水线不画。
+
+    河流的中心线在 OSM 里常常一路画进湖里，而湖本身另有一块水面。画出来就是湖面上
+    一把放射状细线——用户在大津市那张图上看到的就是它。日本尤其密集：`waterway` 来自
+    2006 年 KSJ2（国土数値情報 河川）那次导入，一条河跨度过一公里半却只有两三个点，
+    十条汇到湖面上同一个节点（高岛市那边一个节点汇了十四条），全国 110 座城 244 条。
+
+    判据是几何而不是数据来源：**一条线的两端都在水面里，它描述的就不是岸上那条河**，
+    画不画都不改变「水在哪里」，而画了就多一把假线。只看两端而不看整条：中间穿过
+    水面的桥接段是正常的（河从湖的一头流到另一头），那种线两端在岸上，留着。
+    """
+    if not water_lines or not water_areas:
+        return water_lines
+    polygons = [{"o": codec.decode(area["o"]), "i": [codec.decode(hole) for hole in area.get("i", ())]}
+                for area in water_areas]
+
+    def in_water(point) -> bool:
+        return any(point_in_polygon(point, polygon) for polygon in polygons)
+
+    kept = []
+    for line in water_lines:
+        points = codec.decode(line["p"])
+        if len(points) >= 2 and in_water(points[0]) and in_water(points[-1]):
+            continue
+        kept.append(line)
+    return kept
 
 
 def _keep_area(seen: dict, target: list, encoded: dict) -> None:
