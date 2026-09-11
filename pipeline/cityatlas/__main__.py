@@ -31,7 +31,7 @@ from . import boundary as boundary_module
 from . import compare as compare_module
 from . import directory as directory_module
 from . import fixtures as fixtures_module
-from . import mappack, overpass, pbf, publish, reference, review, selftest
+from . import mappack, overpass, overture, pbf, publish, reference, review, selftest
 from . import frame as frame_module
 from .frame import compute as compute_frame, covering_centres, from_admin_and_ghsl
 from .ghsl import UCDB
@@ -40,7 +40,16 @@ ROOT = Path(__file__).resolve().parent.parent
 
 REPO = ROOT.parent.parent.parent
 DESIGN_HTML = REPO / "docs/散步/demo/2026-09-04-散步城市图 · 优化稿（离线）.html"
-PIPELINE_URL = "https://github.com/hereat/app/tree/main/app/tools/CityAtlas"
+# 生成这些文件的脚本副本，随数据一起发布（ODbL 要求向接收者提供的那一份）。
+# **写相对路径**：主源与备源是两个域名，绝对地址会把备源的读者指回主源；
+# 而先前写死的 `github.com/hereat/app` 是**死链**（那个仓库不存在），
+# 等于把许可要求的「机器可读副本」指进了空处。
+#
+# **指到具体文件，不指目录**：两个源都不做目录索引，`pipeline/` 本身在主源上落进
+# Worker 的 404、在 GitHub Pages 上也是 404（2026-09-11 两个源各实测过）。
+# 那一行是这份副本的唯一入口，指在目录上等于换了个 404。
+# 副本由 `deploy/assemble.sh` 拷进 `pipeline/`。
+PIPELINE_URL = "pipeline/README.md"
 
 # 名册里 `country` 这一列记的是「这座城的包由哪个生产者出」，`out/` 由几个生产者共用：
 # `country` 出一整个国家，`build` 出 `cities.json` 里那批样例城。各自只清各自的。
@@ -105,7 +114,8 @@ def cmd_snapshot(args) -> None:
               f"{data.get('osm3s', {}).get('timestamp_osm_base', '未知')}")
 
 
-def _select_cities(units: list[dict], ucdb, cover_levels: tuple[int, ...]) -> list[dict]:
+def _select_cities(units: list[dict], ucdb, cover_levels: tuple[int, ...],
+                   region_suffix: tuple[str, ...] = ()) -> list[dict]:
     """从行政单位里选出城市名单（规则见 `frame` 的「城市名单」一节）。
 
     `cover_levels` 是**覆盖层**：铺满国土、一定收、不会被别座城吞掉的那一层
@@ -115,13 +125,15 @@ def _select_cities(units: list[dict], ucdb, cover_levels: tuple[int, ...]) -> li
     原来写死的 `level <= 5` 在那里是空集，一座城都选不出来。
 
     每座城同时带上它那片建成区的探针点，`drop_swallowed` 靠它判断「这个区县的地盘上
-    是不是已经有别座城的主城铺过来」。
+    是不是已经有别座城的主城铺过来」。`region_suffix` 是那条判断的例外：名字属于一片
+    区域的覆盖层单位（自治州、盟）谁也不吞，出处见 `pbf.CITY_LEVELS`。
     """
     prepared = []
     for unit in units:
         bound = boundary_module.Boundary(
             osm_relation=unit["osm_id"], admin_level=int(unit["tags"].get("admin_level", 0)),
-            name_zh=unit["name"], name_local=unit["name_local"], polygons=unit["polygons"])
+            name_zh=unit["name"], name_local=unit["name_local"], name_en=unit["name_en"],
+            polygons=unit["polygons"])
         box = bound.bbox
         prepared.append({**unit, "boundary": bound, "bbox": box, "level": bound.admin_level,
                          "area": (box[2] - box[0]) * (box[3] - box[1])})
@@ -165,7 +177,7 @@ def _select_cities(units: list[dict], ucdb, cover_levels: tuple[int, ...]) -> li
                            {"unit": unit, "probe": [], "box": unit["bbox"], "area": 0.0})
 
     kept = frame_module.drop_swallowed(sorted(entries.values(), key=lambda e: -e["area"]),
-                                       cover_levels)
+                                       cover_levels, region_suffix)
     return [entry["unit"] for entry in kept]
 
 
@@ -181,8 +193,11 @@ def cmd_country(args) -> None:
     if not rule:
         raise SystemExit(f"{args.country}：不知道这个国家的「市」是第几级，"
                          f"往 pbf.CITY_LEVELS 里加一行（出处见那里的注释）")
+    # 半份名单（`--only` / `--limit`）不重写分片，也不该用整国的标尺过闸门
+    partial = bool(args.only or args.limit)
     levels, suffix, exclude = rule["levels"], rule.get("suffix"), rule.get("exclude", ())
     cover_levels, require = tuple(rule["cover"]), rule.get("require", ())
+    region_suffix = tuple(rule.get("region_suffix", ()))
     names = rule.get("names", ())
 
     work = WORK / args.country.lower().replace(" ", "-")
@@ -214,6 +229,7 @@ def cmd_country(args) -> None:
             continue
         cities.append({"name": name,
                        "name_local": tags.get("name") or name,
+                       "name_en": boundary_module.english_name(tags),
                        "osm_id": osm_id,
                        "polygons": polygons,
                        "tags": tags})
@@ -221,7 +237,7 @@ def cmd_country(args) -> None:
 
     # 名单不是「读到的边界全都要」，而是按 `frame` 那一节的两条规则合成：
     # 有建成区的地级市 / 直辖市，加上完整包住一片独立建成区、且不属于任何主城的区县。
-    cities = _select_cities(cities, ucdb, cover_levels)
+    cities = _select_cities(cities, ucdb, cover_levels, region_suffix)
     print(f"      选出 {len(cities)} 座城", flush=True)
     if args.limit:
         cities = cities[:args.limit]
@@ -234,38 +250,58 @@ def cmd_country(args) -> None:
     # 文件名带上认哪几种 place，理由同上面的层级：改了要哪几种还读旧缓存，
     # 会静默少掉一整类（日本的町村全靠 village 那一类）。
     places = pbf.city_centres(source, work / f"places-{'-'.join(pbf.PLACE_KINDS)}.geojsonseq")
+    # 名字认不到 place 节点时的第二条路：关系上的 `admin_centre`，也就是驻地。
+    # 自治州、盟这类单位的名字本来就不是任何 place 节点的名字（见 `pbf.admin_centres`）。
+    seats = pbf.admin_centres(boundaries_path.with_suffix(".pbf"), work / f"seats-{tag}.json")
     boxes = {}
     without_centre = []
+    from_seat = []
     for city in cities:
         bound = boundary_module.Boundary(
             osm_relation=city["osm_id"] or 0, admin_level=int(city["tags"].get("admin_level", 0)),
-            name_zh=city["name"], name_local=city["name_local"], polygons=city["polygons"])
+            name_zh=city["name"], name_local=city["name_local"], name_en=city["name_en"],
+            polygons=city["polygons"])
         centres = covering_centres(bound, ucdb)
         centre = pbf.centre_for(boundary_module.spellings(city["tags"]), bound, places)
         if centre is None:
-            without_centre.append(city["name"])
+            centre = seats.get(city["osm_id"])
+            (from_seat if centre else without_centre).append(city["name"])
         frame = from_admin_and_ghsl(bound, centres, ucdb, city_centre=centre)
         city["boundary"] = bound
         city["frame"] = frame
         city["slug"] = f"{args.country.lower()[:2]}-{city['osm_id']}"
         boxes[city["slug"]] = frame.bounds()
 
+    if from_seat:
+        print(f"      {len(from_seat)} 座的市中心取自关系上的驻地（admin_centre）："
+              f"{'、'.join(from_seat[:8])}{' 等' if len(from_seat) > 8 else ''}", flush=True)
     if without_centre:
-        # 报出来而不是静默：这些城的默认取景退回画框中心，可能偏出市中心
-        print(f"      {len(without_centre)} 座没找到 OSM 市中心点，默认取景退回画框中心："
+        # 报出来而不是静默：这些城连驻地都没有，画框退回外接框中心，可能落在没有街道的地方
+        print(f"      {len(without_centre)} 座既没有同名 place 节点、也没有驻地，"
+              f"画框退回外接框中心："
               f"{'、'.join(without_centre[:8])}{' 等' if len(without_centre) > 8 else ''}", flush=True)
-    print(f"[3/4] 从区域文件切出 {len(boxes)} 座城的要素", flush=True)
-    filtered = pbf.filter_tags(source, work / "features.osm.pbf")
-    extracts = pbf.extract(filtered, boxes, work / "extract")
+    if not boxes:
+        raise SystemExit("一座城都没选出来——`--only` 给的名字要与名单里的写法一致（如「上海市」）")
+    print(f"[3/4] 取 {len(boxes)} 座城的要素（Overture {overture.RELEASE}）", flush=True)
+    # 抓的是**所有画框的并集**，不是国土外接框：扫描包围盒是远程查询的主要成本，
+    # 而画框加起来常常只占国土的一部分（`--only` 跑一座城时就只拉那一座的框）。
+    bbox = overture.union_bbox(boxes)
+    print(f"      包围盒 {bbox[0]:.3f},{bbox[1]:.3f} – {bbox[2]:.3f},{bbox[3]:.3f}", flush=True)
+    connection = overture.connect(temp_dir=work / "duckdb-spill")
+    overture.fetch(bbox, work / "overture", con=connection)
+    cut_path = overture.cut(work / "overture", boxes, work / "cut.parquet", con=connection,
+                            gate=not partial)
+    print(f"      切好 {cut_path.stat().st_size / 1e6:.0f} MB", flush=True)
 
     print("[4/4] 出包")
     stamp = pbf.source_stamp(source)
-    print(f"      OSM 截至 {stamp['osmBase']}", flush=True)
-    _emit(cities, extracts, ucdb=ucdb, ghsl=Path(args.ucdb).name, stamp=stamp,
-          out=ROOT / "out", country=args.country, partial=bool(args.only or args.limit))
+    print(f"      行政边界的 OSM 截至 {stamp['osmBase']}，要素来自 Overture {overture.RELEASE}", flush=True)
+    _emit(cities, lambda slug: overture.to_elements(cut_path, slug, con=connection),
+          ucdb=ucdb, ghsl=Path(args.ucdb).name, stamp=stamp,
+          out=ROOT / "out", country=args.country, partial=partial)
 
 
-def _emit(cities, extracts, *, ucdb, ghsl, stamp, out, country: str, partial: bool = False) -> None:
+def _emit(cities, snapshot_of, *, ucdb, ghsl, stamp, out, country: str, partial: bool = False) -> None:
     """出包 + 分片 + 索引页。与 `cmd_build` 的尾巴同一件事，暂各写一份——
     两条路的产物格式一致之后再合并。
 
@@ -284,9 +320,12 @@ def _emit(cities, extracts, *, ucdb, ghsl, stamp, out, country: str, partial: bo
     shard_cities: dict = {}
     produced: set[str] = set()
     done = 0
+
+    # `snapshot_of` 按 slug 取一座城的要素。一个国家的要素同时摆在内存里放不下，
+    # 所以是逐城取而不是一次全读（`overture.to_elements` 的注释讲了为什么不走顺序流）。
     for city in cities:
+        snapshot = snapshot_of(city["slug"])
         frame = city["frame"]
-        snapshot = pbf.to_elements(extracts[city["slug"]])
         city_id = publish.assign(registry, city["osm_id"],
                                  {"slug": city["slug"], "name": city["name"], "country": country,
                                   "assignedInDirectoryVersion": DIRECTORY_VERSION})
@@ -305,7 +344,7 @@ def _emit(cities, extracts, *, ucdb, ghsl, stamp, out, country: str, partial: bo
         path = out / "package" / city_id / f"{MAP_DATA_VERSION}.json.gz"
         publish.write_gzip_json(path, package)
         entry = {"cityID": city_id, "name": city["name"], "nameLocal": city["name_local"],
-                 "mapDataVersion": MAP_DATA_VERSION, "center": package["center"],
+                 "nameEn": city["name_en"], "mapDataVersion": MAP_DATA_VERSION, "center": package["center"],
                  "frame": package["frame"], "bounds": package["bounds"]}
         for cell, shard_entry in directory_module.entries(entry, city["boundary"]).items():
             shard_cities.setdefault(cell, []).append(shard_entry)
@@ -352,19 +391,27 @@ def _write_shards(out: Path, shard_cities: dict, *, mine: set[str], licenses: di
 
     「没访问到的格子也要扫」是必须的：一座城的画框挪了位置，它的旧格子这一轮不会被写到，
     只看这一轮写的格子就会在旧格子里留下一个指向新包的错条目。
+
+    **目录一升版本，上一版的城要跟过来。** 分片按版本分目录，新版本那个目录是空的：
+    只并盘上同版本的分片，等于「凡是这一轮没跑的国家全部消失」——升 v3 时中国重跑了，
+    日本的 1739 座会从目录里蒸发，而 `latest.json` 已经指向 v3，日本用户的散步当场
+    判不出城。这与「跑第二个国家不许动第一个」是同一条保证，只是跨了一次版本。
     """
     directory = out / "directory" / f"v{DIRECTORY_VERSION}"
     directory.mkdir(parents=True, exist_ok=True)
     merged = {cell: list(entries) for cell, entries in shard_cities.items()}
-    for path in sorted(directory.glob("*.json.gz")):
+    previous = directory
+    if not any(directory.glob("*.json.gz")):
+        previous = out / "directory" / f"v{DIRECTORY_VERSION - 1}"
+    for path in sorted(previous.glob("*.json.gz")):
         cell = directory_module.cell_of(path.stem.removesuffix(".json"))
         kept = [entry for entry in _read_shard(path) if entry["cityID"] not in mine]
         if cell in merged:
             merged[cell] = kept + merged[cell]
         elif kept:
             merged[cell] = kept
-        else:
-            path.unlink()          # 这一国搬走之后这格空了
+        elif previous == directory:
+            path.unlink()          # 这一国搬走之后这格空了（上一版的分片原样留着）
 
     shards = []
     for cell, entries in sorted(merged.items()):
@@ -374,6 +421,10 @@ def _write_shards(out: Path, shard_cities: dict, *, mine: set[str], licenses: di
                        "cities": "、".join(entry["name"] for entry in sorted(entries, key=lambda e: e["cityID"])),
                        "path": f"directory/v{DIRECTORY_VERSION}/{path.name}",
                        "size": human(path.stat().st_size)})
+
+    # 新一代写完了，才轮到清旧代——清在前面就把上面那份「别国的城从哪读」删掉了
+    for version in publish.prune_directories(out, DIRECTORY_VERSION):
+        print(f"      目录只留最近两代，删掉 v{version} 的分片", flush=True)
     return shards
 
 
@@ -441,7 +492,7 @@ def cmd_build(args) -> None:
         built = time.monotonic()
 
         entry = {"cityID": city_id, "name": boundary.name_zh, "nameLocal": boundary.name_local,
-                 "mapDataVersion": MAP_DATA_VERSION, "center": package["center"],
+                 "nameEn": boundary.name_en, "mapDataVersion": MAP_DATA_VERSION, "center": package["center"],
                  "frame": package["frame"], "bounds": package["bounds"]}
         for cell, shard_entry in directory_module.entries(entry, boundary).items():
             shard_cities.setdefault(cell, []).append(shard_entry)

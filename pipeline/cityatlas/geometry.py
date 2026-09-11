@@ -119,16 +119,41 @@ Ring = list[tuple[float, float]]
 
 def clip_polyline(points: list[tuple[float, float]], box: Box) -> list[list[tuple[float, float]]]:
     """把折线裁进矩形，返回若干段。逐段 Liang–Barsky，相邻的完整段接回同一条。"""
+    return _stitch(_clip_segment(a, b, box) for a, b in zip(points, points[1:]))
+
+
+def clip_polyline_outside(points: list[tuple[float, float]], polygons: list[dict]) -> list[list[tuple[float, float]]]:
+    """把折线**落在这些多边形之内**的部分裁掉，外面的留着，返回若干段。
+
+    与 `clip_polyline` 是同一层级的操作，但内核不同、不该合并成一个「对任意区域裁剪」：
+    矩形能解析求交（Liang–Barsky），任意多边形只能「求出所有交点、切开、逐段判在不在里面」。
+    两者共用的是接段那一步（`_stitch`）。
+
+    **段的归属按中点判，不按端点。** 端点常常正落在边界上（一条河的最后一个节点就画在
+    岸线上），那时射线法答什么都是对的；中点在哪一侧没有歧义。
+    """
+    def pieces():
+        for a, b in zip(points, points[1:]):
+            cuts = _shore_cuts(a, b, polygons)
+            for start, end in zip(cuts, cuts[1:]):
+                middle = ((start[0] + end[0]) / 2.0, (start[1] + end[1]) / 2.0)
+                yield None if any(point_in_polygon(middle, poly) for poly in polygons) else (start, end)
+
+    return _stitch(pieces())
+
+
+def _stitch(segments) -> list[list[tuple[float, float]]]:
+    """一串 `(起点, 终点)`（`None` 表示这一段没了）接成若干条折线：相邻的接回同一条，
+    不足两点的丢掉。裁剪只有「怎么切一段」不同，接段这一步是共用的。"""
     out: list[list[tuple[float, float]]] = []
     current: list[tuple[float, float]] = []
-    for i in range(len(points) - 1):
-        seg = _clip_segment(points[i], points[i + 1], box)
-        if seg is None:
+    for segment in segments:
+        if segment is None:
             if len(current) > 1:
                 out.append(current)
             current = []
             continue
-        a, b = seg
+        a, b = segment
         if current and _close(current[-1], a):
             current.append(b)
         else:
@@ -138,6 +163,40 @@ def clip_polyline(points: list[tuple[float, float]], box: Box) -> list[list[tupl
     if len(current) > 1:
         out.append(current)
     return out
+
+
+def _shore_cuts(a, b, polygons: list[dict]) -> list:
+    """线段 ab 上的切点，连头带尾按 a→b 排好。一个多边形都没穿过时就是 `[a, b]`。"""
+    parameters = {0.0, 1.0}
+    for polygon in polygons:
+        for ring in (polygon["o"], *polygon.get("i", ())):
+            parameters.update(_crossings(a, b, ring))
+    if len(parameters) == 2:
+        return [a, b]
+    return [a if t == 0.0 else b if t == 1.0 else
+            (a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]))
+            for t in sorted(parameters)]
+
+
+def _crossings(a, b, ring: list):
+    """线段 ab 穿过一个环的那些交点，返回在 ab 上的参数（0 与 1 不算：贴着端点
+    擦过边界不是穿过，那一段的归属交给中点判）。平行与共线不产生交点，同理。"""
+    rx, ry = b[0] - a[0], b[1] - a[1]
+    for i, c in enumerate(ring):
+        d = ring[(i + 1) % len(ring)]
+        sx, sy = d[0] - c[0], d[1] - c[1]
+        denominator = rx * sy - ry * sx
+        if denominator == 0.0:
+            continue
+        cx, cy = c[0] - a[0], c[1] - a[1]
+        t = (cx * sy - cy * sx) / denominator
+        u = (cx * ry - cy * rx) / denominator
+        if 0.0 < t < 1.0 and 0.0 <= u <= 1.0:
+            yield t
+
+
+def boxes_overlap(a: Box, b: Box) -> bool:
+    return not (a[2] < b[0] or a[0] > b[2] or a[3] < b[1] or a[1] > b[3])
 
 
 def _close(a: tuple[float, float], b: tuple[float, float]) -> bool:

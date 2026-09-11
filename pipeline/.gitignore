@@ -1,0 +1,23 @@
+# Overpass 快照：12 MB，重跑 `python3 -m cityatlas snapshot` 就有。
+# 不进仓库是因为它是上游数据的副本，不是这条管线的产物。
+# 「同一输入产出同一个包」靠指纹核，不靠重抓：每个包的 license.generatedFrom 与
+# report.json 里都记着产它的那份快照的 sha256 和对应的 OSM 时刻。重抓拿到的是今天的
+# OSM，字节必然不同——那不叫同一份输入。
+snapshots/
+
+# 发布产物：全国一轮 85 MB、2500 个文件，`country` 命令随时重出。
+# 不进仓库是因为它**可再生**——输入是区域 pbf、GHSL 与这条管线，全都定死了。
+# 真正不可再生的是 `registry.json`（cityID 的身份，派出去就不能改），它在仓库里。
+# 2026-09-07 之前这儿只忽略比对页，那时 out/ 是七座样例城、一共 1 MB；
+# 涨到全国之后再跟踪它，等于每出一版包给仓库加一百兆。
+out/
+out-sample/
+
+# 区域 pbf 的中间产物已经不在仓库里了，落在 `~/Library/Caches/cityatlas`
+# （理由见 `__main__.WORK`）。这两行留着挡住旧位置上可能残留的目录。
+work/
+work.nosync/
+
+# duckdb（要素层的切城靠它，拍板 40）。装在工具目录里而不是全局，
+# 是因为这是这条管线自己的依赖，不该改动机器上的 python。
+.venv/

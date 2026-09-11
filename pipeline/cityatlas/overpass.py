@@ -97,26 +97,40 @@ def boundary_query(name: str, levels: tuple[int, ...], box) -> str:
 
 
 # 图层与 OSM 标签的对应表。四档道路的分档理由写在 `mappack.ROAD_TIERS`。
-FEATURE_QUERY = """[out:json][timeout:900];
-(
-  way["highway"~"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|pedestrian|service|footway|path|steps|cycleway|track|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link)$"]({bbox});
-  way["railway"~"^(rail|light_rail|narrow_gauge|monorail)$"]["tunnel"!~"."]({bbox});
-  way["natural"="coastline"]({bbox});
-  way["waterway"~"^(river|canal|stream)$"]["tunnel"!~"."]({bbox});
-  way["natural"="water"]({bbox});
-  rel["natural"="water"]({bbox});
-  way["landuse"~"^(reservoir|basin)$"]({bbox});
-  rel["landuse"~"^(reservoir|basin)$"]({bbox});
-  way["leisure"~"^(park|garden|nature_reserve)$"]({bbox});
-  rel["leisure"~"^(park|garden|nature_reserve)$"]({bbox});
-  way["landuse"~"^(forest|grass|meadow|recreation_ground|village_green|cemetery|allotments)$"]({bbox});
-  rel["landuse"~"^(forest|grass|meadow|recreation_ground|village_green|cemetery|allotments)$"]({bbox});
-  way["natural"~"^(wood|scrub|grassland|heath)$"]({bbox});
-  rel["natural"~"^(wood|scrub|grassland|heath)$"]({bbox});
-);
-out geom;"""
+# 要素查询**由 `mappack` 的四张表推出来**，不另手写一份。
+#
+# 先前这里是一段写死的 Overpass QL，`pbf.KEEP` 里还有第三份同样的清单，注释写着
+# 「两边必须一致」——一致靠人记就是迟早不一致。「我们画哪些要素」这件事的唯一出处
+# 是 `mappack` 的 `ROAD_TIERS` / `RAILWAY_KINDS` / `WATER_WIDTHS` / `WATER_AREA_TAGS`
+# / `GREEN_AREA_TAGS`，Overpass 这条路与 Overture 那条路都从它推。
+#
+# **岸线不在里面。** `coastline` 那一列的语义换了：它现在装的是闭合的海面环
+# （管线裁到画框、摆正绕向），而 Overpass 给的是一地被裁碎的线段，两者不是一种东西。
+# 这条路只服务 `cities.json` 里那七座样例城的对照，海面不是它要对照的东西。
+_TUNNEL = '["tunnel"!~"."]'
+
+
+def _any_of(values) -> str:
+    return "^(" + "|".join(sorted(values)) + ")$"
+
+
+def _by_key(pairs) -> dict:
+    grouped: dict = {}
+    for key, value in pairs:
+        grouped.setdefault(key, set()).add(value)
+    return grouped
 
 
 def feature_query(box) -> str:
+    from .mappack import (GREEN_AREA_TAGS, RAILWAY_KINDS, ROAD_TIERS,
+                          WATER_AREA_TAGS, WATER_WIDTHS)
+
+    lines = [f'way["highway"~"{_any_of(ROAD_TIERS)}"]({{bbox}});',
+             f'way["railway"~"{_any_of(RAILWAY_KINDS)}"]{_TUNNEL}({{bbox}});',
+             f'way["waterway"~"{_any_of(WATER_WIDTHS)}"]{_TUNNEL}({{bbox}});']
+    for key, values in sorted(_by_key(WATER_AREA_TAGS + GREEN_AREA_TAGS).items()):
+        for kind in ("way", "rel"):
+            lines.append(f'{kind}["{key}"~"{_any_of(values)}"]({{bbox}});')
+    query = "[out:json][timeout:900];\n(\n  " + "\n  ".join(lines) + "\n);\nout geom;"
     bbox = f"{box[1]},{box[0]},{box[3]},{box[2]}"
-    return FEATURE_QUERY.replace("{bbox}", bbox)
+    return query.replace("{bbox}", bbox)

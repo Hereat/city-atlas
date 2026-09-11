@@ -74,6 +74,7 @@ def entries(city: dict, boundary) -> dict[tuple[int, int], dict]:
             "cityID": city["cityID"],
             "name": city["name"],
             "nameLocal": city["nameLocal"],
+            "nameEn": city["nameEn"],
             "mapDataVersion": city["mapDataVersion"],
             "areaKm2": area,
             "frame": {"center": city["center"], "size": city["frame"], "bounds": city["bounds"]},

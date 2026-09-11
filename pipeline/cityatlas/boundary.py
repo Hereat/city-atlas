@@ -5,6 +5,7 @@
 OSM 的边界关系是若干条 way 的集合，顺序与方向都不保证，得自己接。
 
 名字按 PRD：`name:zh` 优先，没有退回 `name`；本地名单独留一列（列表里中文名下面那行）。
+英文名再单独一列——英文界面上显示的是它，取不到就没有（`name_en` 为 `None`）。
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ class Boundary:
     admin_level: int
     name_zh: str
     name_local: str
+    name_en: str | None = None
     polygons: list[dict] = field(default_factory=list)   # {"o": Ring, "i": [Ring…]}
     centre: tuple[float, float] | None = None            # admin_centre 节点
 
@@ -39,6 +41,7 @@ def parse(element: dict) -> Boundary:
         admin_level=int(tags.get("admin_level", 0)),
         name_zh=chinese_name(tags) or name,
         name_local=name,
+        name_en=english_name(tags),
     )
     outer_ways: list[Ring] = []
     inner_ways: list[Ring] = []
@@ -79,6 +82,18 @@ def chinese_name(tags: dict) -> str:
         return simplified_tag
     zh = tags.get("name:zh")
     return zh.split(";")[-1].split("/")[0].strip() if zh else ""
+
+
+def english_name(tags: dict) -> str | None:
+    """OSM 的 `name:en`，没有就是没有。
+
+    **不拿 `name` 顶替**：`name` 是当地写法，东京填的是「東京都」、巴黎填的是「Paris」——
+    它答的是「当地怎么写」，不是「英文怎么写」。顶替的话日本那 1739 座会全部露馅，
+    而露出来的还是汉字。取不到时的退路在 App 那一头（`City.displayName`：退当地写法），
+    这里只答「OSM 有没有给英文名」这一件事。
+    """
+    name = (tags.get("name:en") or "").strip()
+    return name or None
 
 
 def spellings(tags: dict) -> set[str]:

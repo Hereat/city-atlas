@@ -12,14 +12,19 @@ from __future__ import annotations
 import gzip
 import io
 import json
+import shutil
 from pathlib import Path
 
 LICENSES = {
+    # 署名义务跟着数据源走：要素层来自 Overture 的 parquet，而 Overture 的
+    # divisions / transportation / base 三个主题都是 OSM 的再打包（每条记录的
+    # `sources` 里写着 `provider=osm`、`license=ODbL-1.0`），它要求的署名是两家并列。
+    # 行政边界仍然直接读区域 pbf，所以 OpenStreetMap 那半在这条线换血之前之后都在。
     "osm": {
-        "source": "OpenStreetMap contributors",
+        "source": "OpenStreetMap contributors, Overture Maps Foundation",
         "license": "ODbL v1.0",
         "uri": "https://opendatacommons.org/licenses/odbl/1-0/",
-        "attribution": "© OpenStreetMap contributors",
+        "attribution": "© OpenStreetMap contributors, Overture Maps Foundation",
     },
     "ghsl": {
         "source": "GHSL Urban Centre Database R2024A, European Commission JRC",
@@ -107,6 +112,34 @@ def continuity(previous_ids: set[str], current_ids: set[str],
     }
 
 
+# 目录留几代。两代不是「保险起见多留一代」：`_write_shards` 升版本那一轮要从上一代
+# 读别国的城（升 v3 时中国重跑、日本的 1739 座得跟过来），只留一代就没有那份可读的了。
+KEEP_DIRECTORY_GENERATIONS = 2
+
+
+def prune_directories(out: Path, directory_version: int, *, keep: int = KEEP_DIRECTORY_GENERATIONS) -> list[int]:
+    """新一代分片写完之后，`v{N-keep}` 及更早的整代删掉。返回删掉的版本号。
+
+    **这条规则只写给 `directory/`，不写给 `package/`。** 目录分片能删是因为
+    `latest.json` 每次启动都问网络，旧代只服务持续离线的用户；而地图包取哪一版由
+    **每台设备自己落库的号**决定，可以长期停在旧号上——没升级的 App 会一直请求
+    `1.json.gz`（换血文档第八节那张表），删掉旧包就是让那批人的城市图当场空掉。
+    两件事的删除规则不是一回事，别混。
+
+    留着不删的代价是文件数：一代全球分片一千多个，而单个 Cloudflare Worker
+    有两万文件的上限。
+    """
+    removed = []
+    for path in sorted((out / "directory").glob("v*")):
+        if not path.is_dir() or not path.name[1:].isdigit():
+            continue
+        version = int(path.name[1:])
+        if version <= directory_version - keep:
+            shutil.rmtree(path)
+            removed.append(version)
+    return removed
+
+
 def latest(directory_version: int, source_stamp: dict) -> dict:
     return {"directoryVersion": directory_version, "generatedFrom": source_stamp}
 
@@ -125,13 +158,14 @@ INDEX_TEMPLATE = """<!doctype html>
 </style>
 <h1>此间 · 城市图静态资源</h1>
 <p class="note">目录版本 v{directory_version}，生成于 {generated_at}。<br>
-这些文件是从 OpenStreetMap 数据裁剪、简化得到的衍生数据库，按 ODbL 发布；下面列出全部文件与生成方法。</p>
+这些文件是从 OpenStreetMap 数据裁剪、简化得到的衍生数据库，按 ODbL 发布；下面列出全部文件与生成方法。<br>
+道路、铁路、水系、绿地与海面取自 Overture Maps 对 OSM 的再打包，行政边界与市中心点直接读 OSM 区域包。</p>
 
 <h2>许可与来源</h2>
 <ul>
-<li>地图数据 © OpenStreetMap contributors，按 <a href="https://opendatacommons.org/licenses/odbl/1-0/">ODbL v1.0</a> 提供。源数据快照：{osm_stamp}。</li>
+<li>地图数据 © OpenStreetMap contributors、Overture Maps Foundation，按 <a href="https://opendatacommons.org/licenses/odbl/1-0/">ODbL v1.0</a> 提供。源数据快照：{osm_stamp}。</li>
 <li>城市画框依据 <a href="https://human-settlement.emergency.copernicus.eu/ghs_ucdb_2024.php">GHSL Urban Centre Database R2024A</a>，© European Union，按 <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a> 提供。</li>
-<li>生成这些文件的全部脚本：<code>app/tools/CityAtlas/</code>（<a href="{pipeline_url}">{pipeline_url}</a>）。</li>
+<li>生成这些文件的全部脚本：<a href="{pipeline_url}"><code>{pipeline_url}</code></a>（这份产物旁边的副本）。</li>
 </ul>
 
 <h2>目录分片</h2>

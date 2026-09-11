@@ -1,10 +1,31 @@
 {
-  // 纯静态资源的 Worker：没有代码，只把仓库根目录当文件服务。
-  // Cloudflare 新版把建站入口都收进了 Workers，Pages 的老流程正在退场，
-  // 所以走这条而不是 Pages —— 部署命令 `npx wrangler deploy` 认的就是这份配置。
+  // city-atlas 的部署配置。**这份文件是发布的凭据，仓库里这份才是真的**——
+  // 先前它只活在 `Hereat/city-atlas` 那个仓库的 clone 里，改一次没人知道改了什么。
+  //
+  // 部署时这份配置与 `worker.js`、`.assetsignore` 一起拷进那个 clone 的根，
+  // 在那里跑 `npx wrangler@4 deploy`（步骤见 README）。
   "name": "city-atlas",
-  "compatibility_date": "2026-09-06",
+  "main": "worker.js",
+  "compatibility_date": "2026-09-11",
+
+  // 仓库根整个当文件服务。**次序是「先 assets，没命中才进 worker.js」**
+  // （`run_worker_first` 默认 false，别打开它）：正常的分片与地图包请求
+  // 一个字节都不经过 Worker 代码，那段代码只看得到 404。
   "assets": {
-    "directory": "./"
-  }
+    "directory": "./",
+    // 绑定是给 worker.js 用的：它在记账之前先问一句「自家 directory/latest.json 还在不在」，
+    // 不在就答 503 而不是 404。理由见 worker.js 顶上那段——App 会把主源的 404 当成
+    // 「这一格没有城」写进库，所以这个 404 必须是自证的。
+    "binding": "ASSETS"
+  },
+
+  // 「有人问了这一格，而这一格没有城」的计数。只写格号，不写 IP、不写标识。
+  // 账户还没开 Analytics Engine 时把这一段整块注掉即可，`worker.js` 那边
+  // 已经写成绑定缺失也照常返回 404。
+  "analytics_engine_datasets": [
+    {
+      "binding": "MISSES",
+      "dataset": "city_atlas_shard_misses"
+    }
+  ]
 }

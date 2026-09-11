@@ -11,8 +11,9 @@ import hashlib
 import json
 
 from . import codec
-from .geometry import (Projection, assemble_polygons, clip_polyline, clip_ring,
-                       point_in_polygon, ring_area, simplify, stitch_rings)
+from .geometry import (Projection, assemble_polygons, bounds, boxes_overlap,
+                       clip_polyline, clip_polyline_outside, clip_ring,
+                       ring_area, simplify, stitch_rings)
 
 # 四档道路。分档看的是「这条路在一张城市图上该有多粗」，不是 OSM 的功能分类本身：
 # 一档是穿城的骨架，二档是区与区之间，三档是住得进人的街，四档是前三档之外还画得出来的
@@ -31,10 +32,32 @@ ROAD_TIERS = {
     "service": 4, "footway": 4, "path": 4, "steps": 4, "cycleway": 4, "track": 4, "pedestrian": 4,
 }
 
+# 画进图里的轨道类型。**白名单而不是黑名单**，与 `ROAD_TIERS` 同一个形状：
+# 判据是「这条轨道今天有车在跑」，能穷举的是跑车的那几类，不是不跑车的那些。
+#
+# 先前收的是「任何带 railway 标签的 way」，于是废线、停用线、在建线全画进了图：
+# 上海画框内这一批占轨道总长的两成（1230 km / 6169 km，未裁边口径；1991 年就停用的
+# 沪杭线、废弃货线都在里面），关东 925 条里也是绝大多数。黑名单挡不干净——OSM 里
+# 表达「不再使用」的写法有 `railway=abandoned|disused|razed|proposed|construction`
+# 和 `abandoned:railway=rail` 两套，后者的 `railway` 键根本不存在。
+#
+# `platform`（站台）、`station`（站房）也随黑名单一起挡掉了：它们是面或点，
+# 描成线会在站场那里糊成一片。
+RAILWAY_KINDS = frozenset({"rail", "subway", "light_rail", "tram", "monorail",
+                           "narrow_gauge", "funicular"})
+
 # 线状水系的画宽（米）。稿的 `waterLines` 里 `w` 就是这个数。
 WATER_WIDTHS = {"river": 8, "canal": 6, "stream": 3}
 
 WATER_AREA_TAGS = (("natural", "water"), ("landuse", "reservoir"), ("landuse", "basin"))
+
+# 静水面：水线画进这几类面里的那一段裁掉（`_trim_lines_in_still_water`）。
+# 判据是「这块水面里再画一条中心线是多余的」——湖、塘、水库是静的，一条线穿过去
+# 说不出任何水在哪里之外的事；河与运河**不参与**，宽河中间那道线是现在的画法
+# （`WATER_WIDTHS`），色表冻结着，不顺手改。
+# `landuse` 那两个值不是补全，是那两个标签本身的意思就是一潭静水。
+STILL_WATER_TAGS = (("water", "lake"), ("water", "pond"), ("water", "reservoir"),
+                    ("landuse", "reservoir"), ("landuse", "basin"))
 GREEN_AREA_TAGS = (
     ("leisure", "park"), ("leisure", "garden"), ("leisure", "nature_reserve"),
     ("landuse", "forest"), ("landuse", "grass"), ("landuse", "meadow"),
@@ -77,8 +100,9 @@ def build(snapshot: dict, *, name: str, name_local: str, center, frame) -> dict:
     rail: list[list[int]] = []
     water_lines: list[dict] = []
     water_areas: list[dict] = []
+    still_outers: set[bytes] = set()       # 湖 / 塘 / 水库的外环，水线按它们裁
     green_areas: list[dict] = []
-    coastlines: list[list[int]] = []
+    coastlines: list[list[int]] = []       # 海面的环，一环一条，绕向即角色
 
     for element in snapshot.get("elements", ()):
         if element.get("type") not in ("way", "relation"):
@@ -94,11 +118,18 @@ def build(snapshot: dict, *, name: str, name_local: str, center, frame) -> dict:
             tier = ROAD_TIERS[highway]
             _add_lines(roads[str(tier)], points, box, TOLERANCE[tier])
             continue
-        if tags.get("railway") and points:
+        if tags.get("railway") in RAILWAY_KINDS and points:
             _add_lines(rail, points, box, TOLERANCE["line"])
             continue
         if tags.get("natural") == "coastline" and points:
-            _add_lines(coastlines, points, box, TOLERANCE["line"])
+            # 海面是**面**，不是线：一环一份进 `coastline`，**绕向就是这一环的角色**
+            # （顺时针是海、逆时针是岛，摆正在 `overture._sea_rings`）。渲染器按 nonzero
+            # 填，岛在海里自然成洞、岛中的湖又自然填回水，App 侧不必再接链、去重、
+            # 沿画框围。裁剪是保向的（Sutherland–Hodgman 按原顺序走），所以裁到画框
+            # 之后绕向仍然作数——`selftest` 有一条盯着这件事。
+            encoded = _encode_polygon({"o": points, "i": []}, box)
+            if encoded:
+                coastlines.append(encoded["o"])
             continue
         waterway = tags.get("waterway")
         if waterway in WATER_WIDTHS and points:
@@ -108,62 +139,102 @@ def build(snapshot: dict, *, name: str, name_local: str, center, frame) -> dict:
             continue
 
         target = None
-        if any(tags.get(key) == value for key, value in WATER_AREA_TAGS):
+        if _matches(tags, WATER_AREA_TAGS):
             target = water_areas
-        elif any(tags.get(key) == value for key, value in GREEN_AREA_TAGS):
+        elif _matches(tags, GREEN_AREA_TAGS):
             target = green_areas
         if target is None:
             continue
+        still = target is water_areas and _matches(tags, STILL_WATER_TAGS)
         for polygon in _polygons(element, projection):
             encoded = _encode_polygon(polygon, box)
             if encoded:
                 _keep_area(areas_by_outer, target, encoded)
+                if still:
+                    # 记外环、不记这一份面：同一个湖画两遍（一遍带湖心岛、一遍没画）时，
+                    # `_keep_area` 留的是带岛那份，而裁线必须用**画出来的那份**——
+                    # 拿没岛那份去裁，岛上那截河道会跟着湖面一起被裁掉。
+                    still_outers.add(_outer_key(encoded))
 
     # 水面要等整趟遍历跑完才齐全，所以这一步不能放进循环里
-    water_lines = _drop_lines_inside_water(water_lines, water_areas)
+    still_water = [area for area in water_areas if _outer_key(area) in still_outers]
+    water_lines = _trim_lines_in_still_water(water_lines, still_water)
 
+    # **落盘前把每一层排序。** 「同一输入重跑逐字节相同」是 S0 的验收项，而
+    # `content_hash` 是顺序敏感的：上游按城取要素那一趟没有稳定行序（DuckDB 并行扫描，
+    # 关掉行序保持才排得动几千万行），同一份 `cut.parquet` 重出上海，`roads` 与 `rail`
+    # 会是「顺序不同、内容逐条相同」，hash 于是每次都变。排一次就把上游的顺序问题
+    # 挡在产物之外，图上没有区别——同一层里线与线、面与面同色同宽，画的先后不改变结果。
     package = {
         "name": name,
         "nameLocal": name_local,
         "center": [round(center[0], 6), round(center[1], 6)],
         "frame": [int(frame[0]), int(frame[1])],
-        "roads": roads,
-        "rail": rail,
-        "water": water_areas,
-        "waterLines": water_lines,
-        "green": green_areas,
+        "roads": {tier: sorted(lines) for tier, lines in roads.items()},
+        "rail": sorted(rail),
+        "water": sorted(water_areas, key=_area_order),
+        "waterLines": sorted(water_lines, key=lambda line: (line["p"], line["w"])),
+        "green": sorted(green_areas, key=_area_order),
     }
     if coastlines:
-        package["coastline"] = coastlines
+        package["coastline"] = sorted(coastlines)
     return package
 
 
-def _drop_lines_inside_water(water_lines: list[dict], water_areas: list[dict]) -> list[dict]:
-    """两端都落在水面之内的水线不画。
+def _matches(tags: dict, table) -> bool:
+    """这一份 tags 落在那张表里吗。三张表（水面、绿地、静水面）同一个形状、同一个问法。"""
+    return any(tags.get(key) == value for key, value in table)
+
+
+def _outer_key(area: dict) -> bytes:
+    """一块面的身份就是它的**外环**，不含内环。`_keep_area` 的去重与裁线时「这块面是不是
+    静水」都按它认，所以只有这一处定义。"""
+    return hashlib.sha1(repr(area["o"]).encode()).digest()
+
+
+def _area_order(area: dict):
+    return area["o"], area["i"]
+
+
+def _trim_lines_in_still_water(water_lines: list[dict], still_water: list[dict]) -> list[dict]:
+    """水线落在静水面里的那一段裁掉，岸上的那段留着。
 
     河流的中心线在 OSM 里常常一路画进湖里，而湖本身另有一块水面。画出来就是湖面上
     一把放射状细线——用户在大津市那张图上看到的就是它。日本尤其密集：`waterway` 来自
     2006 年 KSJ2（国土数値情報 河川）那次导入，一条河跨度过一公里半却只有两三个点，
     十条汇到湖面上同一个节点（高岛市那边一个节点汇了十四条），全国 110 座城 244 条。
 
-    判据是几何而不是数据来源：**一条线的两端都在水面里，它描述的就不是岸上那条河**，
-    画不画都不改变「水在哪里」，而画了就多一把假线。只看两端而不看整条：中间穿过
-    水面的桥接段是正常的（河从湖的一头流到另一头），那种线两端在岸上，留着。
-    """
-    if not water_lines or not water_areas:
-        return water_lines
-    polygons = [{"o": codec.decode(area["o"]), "i": [codec.decode(hole) for hole in area.get("i", ())]}
-                for area in water_areas]
+    **判据先前是「两端都在水面里」，在大津 0 比 95 一条都没挡住。** 真实的失败形状是
+    一端在岸上、一端伸进湖里，而按端点判只有两种写法，都不对：要求两端都在水里等于
+    要求整条线泡在湖里（一条都挡不住），改成「有一端在水里就整条删」又会把河口那段
+    正常的岸上河道一起删掉。按面裁没有这个取舍——**该断的地方就是湖岸**，湖盖住的
+    那段消失，岸上那段一米不动。
 
-    def in_water(point) -> bool:
-        return any(point_in_polygon(point, polygon) for polygon in polygons)
+    裁的空间是编码之后的整数米，与水面同一套坐标：湖岸是包里那个简化过的环，
+    裁点落在它上面，而不是落在一条盘上没有的原始岸线上。
+    """
+    if not water_lines or not still_water:
+        return water_lines
+    lakes = []
+    for area in still_water:
+        polygon = {"o": codec.decode(area["o"]), "i": [codec.decode(hole) for hole in area.get("i", ())]}
+        lakes.append((bounds(polygon["o"]), polygon))
 
     kept = []
     for line in water_lines:
         points = codec.decode(line["p"])
-        if len(points) >= 2 and in_water(points[0]) and in_water(points[-1]):
+        # 外接框先筛一遍。全国大多数水线离任何湖都很远，这一刀让它们连一次射线法都不用跑，
+        # 也不必重新编码（原样留着的那条线字节不变）。这不是过早优化：不筛就是
+        # 「线数 × 湖数」对里每一对都跑一遍求交与射线法，从一分钟变成几小时。
+        line_box = bounds(points)
+        near = [polygon for box, polygon in lakes if boxes_overlap(box, line_box)]
+        if not near:
+            kept.append(line)
             continue
-        kept.append(line)
+        for piece in clip_polyline_outside(points, near):
+            flat = codec.encode(piece)
+            if flat:
+                kept.append({"w": line["w"], "p": flat})
     return kept
 
 
@@ -186,7 +257,7 @@ def _keep_area(seen: dict, target: list, encoded: dict) -> None:
     两个列表，同一个外环可能先作为绿地进来、再作为水面出现，那时拿着绿地那份去水面
     列表里找位置会直接抛错（2026-09-07 全国出包跑到第 577 座炸在这儿）。
     """
-    key = hashlib.sha1(repr(encoded["o"]).encode()).digest()
+    key = _outer_key(encoded)
     holes = len(encoded.get("i", []))
     previous = seen.get(key)
     if previous is None:

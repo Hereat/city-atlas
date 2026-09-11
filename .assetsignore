@@ -4,3 +4,8 @@
 .git
 .assetsignore
 .wrangler
+
+# 部署自身的东西不是数据。`pipeline/` 相反——那是 ODbL 要求随数据提供的脚本副本，
+# 必须发出去，所以不在这张单子上。
+wrangler.jsonc
+worker.js

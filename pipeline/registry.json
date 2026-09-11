@@ -2351,6 +2351,13 @@
       "name": "永川区",
       "slug": "ch-2693404"
     },
+    "2693951": {
+      "assignedInDirectoryVersion": 3,
+      "cityID": "c03226",
+      "country": "China",
+      "name": "合作市",
+      "slug": "ch-2693951"
+    },
     "2696771": {
       "assignedInDirectoryVersion": 1,
       "cityID": "c00178",
@@ -2526,6 +2533,13 @@
       "name": "玉树藏族自治州",
       "slug": "ch-2707991"
     },
+    "2708757": {
+      "assignedInDirectoryVersion": 3,
+      "cityID": "c03213",
+      "country": "China",
+      "name": "格尔木市",
+      "slug": "ch-2708757"
+    },
     "2709754": {
       "assignedInDirectoryVersion": 1,
       "cityID": "c00290",
@@ -2553,6 +2567,13 @@
       "country": "China",
       "name": "松滋市",
       "slug": "ch-2709812"
+    },
+    "2710651": {
+      "assignedInDirectoryVersion": 3,
+      "cityID": "c03222",
+      "country": "China",
+      "name": "阿图什市",
+      "slug": "ch-2710651"
     },
     "2710679": {
       "assignedInDirectoryVersion": 1,
@@ -2764,6 +2785,13 @@
       "name": "丘北县",
       "slug": "ch-2723224"
     },
+    "2723225": {
+      "assignedInDirectoryVersion": 3,
+      "cityID": "c03219",
+      "country": "China",
+      "name": "文山市",
+      "slug": "ch-2723225"
+    },
     "2723227": {
       "assignedInDirectoryVersion": 1,
       "cityID": "c01296",
@@ -2932,6 +2960,13 @@
       "name": "保山市",
       "slug": "ch-2727146"
     },
+    "2727332": {
+      "assignedInDirectoryVersion": 3,
+      "cityID": "c03209",
+      "country": "China",
+      "name": "楚雄市",
+      "slug": "ch-2727332"
+    },
     "2727333": {
       "assignedInDirectoryVersion": 1,
       "cityID": "c01325",
@@ -2974,6 +3009,13 @@
       "name": "宾川县",
       "slug": "ch-2727733"
     },
+    "2727734": {
+      "assignedInDirectoryVersion": 3,
+      "cityID": "c03217",
+      "country": "China",
+      "name": "大理市",
+      "slug": "ch-2727734"
+    },
     "2727738": {
       "assignedInDirectoryVersion": 1,
       "cityID": "c01019",
@@ -2995,12 +3037,26 @@
       "name": "大理白族自治州",
       "slug": "ch-2727745"
     },
+    "2729693": {
+      "assignedInDirectoryVersion": 3,
+      "cityID": "c03224",
+      "country": "China",
+      "name": "香格里拉市",
+      "slug": "ch-2729693"
+    },
     "2729695": {
       "assignedInDirectoryVersion": 1,
       "cityID": "c01017",
       "country": "China",
       "name": "迪庆藏族自治州",
       "slug": "ch-2729695"
+    },
+    "2729767": {
+      "assignedInDirectoryVersion": 3,
+      "cityID": "c03227",
+      "country": "China",
+      "name": "泸水市",
+      "slug": "ch-2729767"
     },
     "2729768": {
       "assignedInDirectoryVersion": 1,
@@ -3078,6 +3134,13 @@
       "country": "China",
       "name": "巴音郭楞蒙古自治州",
       "slug": "ch-2747242"
+    },
+    "2747283": {
+      "assignedInDirectoryVersion": 3,
+      "cityID": "c03207",
+      "country": "China",
+      "name": "库尔勒市",
+      "slug": "ch-2747283"
     },
     "2748331": {
       "assignedInDirectoryVersion": 1,
@@ -3170,6 +3233,13 @@
       "name": "克拉玛依市",
       "slug": "ch-2751491"
     },
+    "2751497": {
+      "assignedInDirectoryVersion": 3,
+      "cityID": "c03208",
+      "country": "China",
+      "name": "伊宁市",
+      "slug": "ch-2751497"
+    },
     "2751564": {
       "assignedInDirectoryVersion": 1,
       "cityID": "c00508",
@@ -3204,6 +3274,13 @@
       "country": "China",
       "name": "阿勒泰市",
       "slug": "ch-2752330"
+    },
+    "2752405": {
+      "assignedInDirectoryVersion": 3,
+      "cityID": "c03216",
+      "country": "China",
+      "name": "昌吉市",
+      "slug": "ch-2752405"
     },
     "2752406": {
       "assignedInDirectoryVersion": 1,
@@ -3372,6 +3449,13 @@
       "country": "China",
       "name": "二连浩特市",
       "slug": "ch-2753021"
+    },
+    "2753028": {
+      "assignedInDirectoryVersion": 3,
+      "cityID": "c03212",
+      "country": "China",
+      "name": "锡林浩特市",
+      "slug": "ch-2753028"
     },
     "2753029": {
       "assignedInDirectoryVersion": 1,
@@ -3834,6 +3918,13 @@
       "country": "China",
       "name": "汪清县",
       "slug": "ch-2761939"
+    },
+    "2761940": {
+      "assignedInDirectoryVersion": 3,
+      "cityID": "c03210",
+      "country": "China",
+      "name": "延吉市",
+      "slug": "ch-2761940"
     },
     "2761941": {
       "assignedInDirectoryVersion": 1,
@@ -4668,6 +4759,13 @@
       "name": "兴业县",
       "slug": "ch-2776351"
     },
+    "2777416": {
+      "assignedInDirectoryVersion": 3,
+      "cityID": "c03221",
+      "country": "China",
+      "name": "都匀市",
+      "slug": "ch-2777416"
+    },
     "2777424": {
       "assignedInDirectoryVersion": 1,
       "cityID": "c01390",
@@ -4681,6 +4779,13 @@
       "country": "China",
       "name": "黔南布依族苗族自治州",
       "slug": "ch-2777425"
+    },
+    "2777838": {
+      "assignedInDirectoryVersion": 3,
+      "cityID": "c03215",
+      "country": "China",
+      "name": "凯里市",
+      "slug": "ch-2777838"
     },
     "2777847": {
       "assignedInDirectoryVersion": 1,
@@ -4843,6 +4948,13 @@
       "name": "兴仁市",
       "slug": "ch-2781288"
     },
+    "2781289": {
+      "assignedInDirectoryVersion": 3,
+      "cityID": "c03218",
+      "country": "China",
+      "name": "兴义市",
+      "slug": "ch-2781289"
+    },
     "2781292": {
       "assignedInDirectoryVersion": 1,
       "cityID": "c00500",
@@ -5003,6 +5115,13 @@
       "country": "China",
       "name": "凉山彝族自治州",
       "slug": "ch-2785750"
+    },
+    "2786746": {
+      "assignedInDirectoryVersion": 3,
+      "cityID": "c03214",
+      "country": "China",
+      "name": "西昌市",
+      "slug": "ch-2786746"
     },
     "2787459": {
       "assignedInDirectoryVersion": 1,
@@ -5760,6 +5879,13 @@
       "name": "保靖县",
       "slug": "ch-2972160"
     },
+    "2972164": {
+      "assignedInDirectoryVersion": 3,
+      "cityID": "c03220",
+      "country": "China",
+      "name": "吉首市",
+      "slug": "ch-2972164"
+    },
     "2972165": {
       "assignedInDirectoryVersion": 1,
       "cityID": "c00978",
@@ -5843,6 +5969,13 @@
       "country": "China",
       "name": "宜昌市",
       "slug": "ch-2983923"
+    },
+    "2984068": {
+      "assignedInDirectoryVersion": 3,
+      "cityID": "c03211",
+      "country": "China",
+      "name": "恩施市",
+      "slug": "ch-2984068"
     },
     "2984070": {
       "assignedInDirectoryVersion": 1,
@@ -18094,6 +18227,13 @@
       "name": "久米岛町",
       "slug": "ja-4523876"
     },
+    "4525659": {
+      "assignedInDirectoryVersion": 3,
+      "cityID": "c03225",
+      "country": "China",
+      "name": "玉树市",
+      "slug": "ch-4525659"
+    },
     "4533906": {
       "assignedInDirectoryVersion": 2,
       "cityID": "c02292",
@@ -21075,6 +21215,13 @@
       "name": "大泉町",
       "slug": "ja-5325123"
     },
+    "5339226": {
+      "assignedInDirectoryVersion": 3,
+      "cityID": "c03223",
+      "country": "China",
+      "name": "景洪市",
+      "slug": "ch-5339226"
+    },
     "5405557": {
       "assignedInDirectoryVersion": 1,
       "cityID": "c00435",
@@ -22440,5 +22587,5 @@
       "slug": "ch-9638643"
     }
   },
-  "nextSerial": 3207
+  "nextSerial": 3228
 }

@@ -135,6 +135,25 @@ def short_side_from(boundary, centres) -> int:
     return max(SHORT_MIN, int(round(short / SHORT_STEP) * SHORT_STEP))
 
 
+def default_short_for(width: float, height: float) -> int:
+    """默认取景的短边（米）：城市尺度的 `DEFAULT_FRACTION`，夹在 `DEFAULT_MIN` 与
+    「装得进画框」之间。取整到 `SHORT_STEP`。
+
+    **尺度取长边，不取短边**（2026-09-09 改）。`DEFAULT_FRACTION` 想说的是「第一眼先看
+    这座城的三分之一」，而按短边量，一座沿海湾拉开的城会被它最窄的那一维定了调：
+    香港画框 26.0 × 18.5 km，短边折算 14.8 km，×0.35 = 5.2 km，再被 6 km 的下限夹住——
+    **26 km 的数据只给了 6 km 那一眼，第一眼认不出这是香港**（用户 2026-09-09 在取证页
+    上指出）。慈溪 42 km 给 6 km、神户 36 km 给 6 km、唐山 54 km 给 8 km，都是同一条。
+
+    改成长边之后同一个 0.35 对每座城说的是同一句话：大城一律看到画框宽度的 35%，
+    先前是随形状在 14%–30% 之间漂。**小城一座都不受影响**（画框短边不足 6 km 的
+    1159 座里 0 座改变，那 6 km 的下限本来就在替它们说话），全国 3222 座里改到 159 座。
+    """
+    fits = (width, height / ASPECT)
+    value = max(DEFAULT_MIN, int(round(max(fits) * DEFAULT_FRACTION / SHORT_STEP) * SHORT_STEP))
+    return int(min(value, *fits))
+
+
 def from_urban_centre(centre, polygons) -> Frame:
     """GHSL 那条路的画框：**数据范围取城区多边形的外接框**，不是等面积框。
 
@@ -163,12 +182,9 @@ def from_urban_centre(centre, polygons) -> Frame:
     width = max(SHORT_MIN, int(math.ceil((max(lons) - min(lons)) * mx / SHORT_STEP) * SHORT_STEP))
     height = max(SHORT_MIN, int(math.ceil((max(lats) - min(lats)) * my / SHORT_STEP) * SHORT_STEP))
 
-    default = short_side_from_area(centre.area_km2)
-    default = max(DEFAULT_MIN, int(round(default * DEFAULT_FRACTION / SHORT_STEP) * SHORT_STEP))
-    default = min(default, width, int(height / ASPECT))
-
     return Frame(round(lon, 6), round(lat, 6), width, height, "ucdb-bbox", True,
-                 default, (centre.lon - lon) * mx, (centre.lat - lat) * my)
+                 default_short_for(width, height),
+                 (centre.lon - lon) * mx, (centre.lat - lat) * my)
 
 
 # 量「这片建成区与这座城重叠在哪」时，一副轮廓上取样多少个点。
@@ -237,9 +253,8 @@ def from_admin_and_ghsl(boundary, centres, ucdb, city_centre=None) -> Frame:
     if not inside and city_centre is not None:
         short = UNCOVERED_SHORT
         height = int(short * ASPECT)
-        default = max(DEFAULT_MIN, int(round(short * DEFAULT_FRACTION / SHORT_STEP) * SHORT_STEP))
         return Frame(round(city_centre[0], 6), round(city_centre[1], 6), short, height,
-                     "osm-centre", False, min(default, short), 0.0, 0.0)
+                     "osm-centre", False, default_short_for(short, height), 0.0, 0.0)
 
     if not inside:
         best = 0.0
@@ -283,9 +298,7 @@ def from_admin_and_ghsl(boundary, centres, ucdb, city_centre=None) -> Frame:
     width = max(SHORT_MIN, int(math.ceil((max(lons) - min(lons)) * mx / SHORT_STEP) * SHORT_STEP))
     height = max(SHORT_MIN, int(math.ceil((max(lats) - min(lats)) * my / SHORT_STEP) * SHORT_STEP))
 
-    default = max(DEFAULT_MIN, int(round(min(width, height / ASPECT)
-                                         * DEFAULT_FRACTION / SHORT_STEP) * SHORT_STEP))
-    default = min(default, width, int(height / ASPECT))
+    default = default_short_for(width, height)
 
     # **默认取景以市中心为心，不是画框的几何中心。** 建成区的外接框中心不等于城市中心：
     # 成都往南铺得远（天府新区）、重庆主城被江切成几块，几何中心都会偏出去——
@@ -376,22 +389,27 @@ def smallest_containing(probe, units, *, coverage: float = 0.95):
     return full or best
 
 
-def drop_swallowed(entries, cover_levels):
+def drop_swallowed(entries, cover_levels, region_suffix=()):
     """剔掉「已经是别座城主城的一部分」的区县。
 
     浦东新区里有临港这种与主城不相连的建成区，于是整个浦东被当成一座城——可浦东同时
     又是上海主城的一部分，图上会出现两座重叠的「城」。
 
-    两条约束，都是被反例逼出来的：
+    三条约束，都是被反例逼出来的：
 
     * **只有候补层（不在 `cover_levels` 里的那些）会被剔**。不加这条，珠三角那片连绵建成区会
       把地盘与它重叠的**广州市、苏州市、嘉兴市**一并剔掉——它们是正经的地级市，
       不是谁的一部分（2026-09-07 实测，误剔 161 座里有一批是这种）。
     * **判据是地理事实，不是行政级别**。按「区一律不独立」会误伤涪陵、万州、永川、
       江津——它们全是市辖区，而辖区里没有任何一片属于重庆主城。
+    * **名字属于一片区域的那些（`region_suffix`）谁也不吞**。中国的自治州与盟：它们的
+      「主城」恰恰就在驻地那座城，上面两条会让州府被自己的州吞掉——西昌市之于凉山
+      彝族自治州。州仍留在名单里兜底，只是不再吞下驻地那座城，判据与出处见
+      `pbf.CITY_LEVELS`。
 
     `entries` 按建成区面积从大到小给，大的先占。
     """
+    region_suffix = tuple(region_suffix)
     kept = []
     for entry in entries:
         unit = entry["unit"]
@@ -401,6 +419,9 @@ def drop_swallowed(entries, cover_levels):
         box = unit["bbox"]
         swallowed = False
         for bigger in kept:
+            # 名字是区域名的那些谁也不吞；后缀表为空的国家 `endswith` 恒假，照旧
+            if bigger["unit"]["name"].endswith(region_suffix):
+                continue
             other = bigger["box"]
             # 外接框不相交就不可能吞并，先筛一道：不筛是 1500 座两两判断，跑十八分钟
             if other[2] < box[0] or other[0] > box[2] or other[3] < box[1] or other[1] > box[3]:

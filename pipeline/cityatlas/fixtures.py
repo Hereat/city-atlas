@@ -46,6 +46,10 @@ def build(root: Path, repo: Path) -> list[Path]:
         city = json.loads((root / "reference" / "cities" / f"{slug}.json").read_text(encoding="utf-8"))
         package = {key: value for key, value in city.items() if key not in DEMO_ONLY}
         package["nameLocal"] = package["name"]
+        # 稿里没有英文名，而 S4 的英文冒烟要在城市页上认出一座城（`City.displayName`）。
+        # slug 本来就是这两座城的英文名，首字母大写即是——不另建一张映射表。
+        # 只进目录条目、不进 `package`：地图包不带英文名（实施拍板 2），夹具照着来。
+        name_en = slug.capitalize()
         package.update({
             "cityID": city_id,
             "directoryVersion": DIRECTORY_VERSION,
@@ -57,9 +61,10 @@ def build(root: Path, repo: Path) -> list[Path]:
         written.append(_write(out / f"package-{city_id}-{MAP_DATA_VERSION}.json.gz", package))
 
         entry = {"cityID": city_id, "name": package["name"], "nameLocal": package["nameLocal"],
+                 "nameEn": name_en,
                  "mapDataVersion": MAP_DATA_VERSION, "center": package["center"],
                  "frame": package["frame"], "bounds": package["bounds"]}
-        for cell, shard_entry in directory.entries(entry, _rectangle_boundary(package)).items():
+        for cell, shard_entry in directory.entries(entry, _rectangle_boundary(package, name_en)).items():
             shard_cities.setdefault(cell, []).append(shard_entry)
 
     for cell, cities in sorted(shard_cities.items()):
@@ -74,12 +79,13 @@ def build(root: Path, repo: Path) -> list[Path]:
     return written
 
 
-def _rectangle_boundary(package: dict) -> Boundary:
+def _rectangle_boundary(package: dict, name_en: str) -> Boundary:
     lon, lat = package["center"]
     west, south, east, north = bounds_of(lon, lat,
                                          package["frame"][0] * RECT_INFLATION,
                                          package["frame"][1] * RECT_INFLATION)
     return Boundary(osm_relation=0, admin_level=0, name_zh=package["name"], name_local=package["name"],
+                    name_en=name_en,
                     polygons=[{"o": [(west, south), (east, south), (east, north), (west, north)], "i": []}])
 
 

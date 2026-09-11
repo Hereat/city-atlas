@@ -1,7 +1,20 @@
 # CityAtlas · 城市图静态资源生成管线（S0）
 
-内部工具，不进 App 包。它不在 `project.yml` 的任何 target 里，是一个只依赖 Python 标准库的
-脚本包，`python3 -m cityatlas <命令>` 直接在 macOS 上跑。
+内部工具，不进 App 包。它不在 `project.yml` 的任何 target 里，是一个 `python3 -m cityatlas <命令>`
+直接在 macOS 上跑的脚本包。
+
+**外部依赖两个**：`osmium`（读区域 pbf 里的行政边界与 place 点）与 `duckdb`（按画框切
+Overture 的要素 parquet）。先前这里写的是「只依赖 Python 标准库」，2026-09-08 拍板放弃
+（拍板 40）：换来的是抓取与切城从两小时降到十分钟出头，而那笔依赖无论换不换数据源都要付
+——把两小时压下去只有一条路，就是「落地成带统计信息的列式文件、用 SQL 切」。
+几何算法仍然一行外部代码都不用（`geometry` 那一节的「零依赖的代价」还成立）。
+
+```bash
+cd app/tools/CityAtlas
+python3 -m venv .venv && .venv/bin/pip install duckdb   # 一次就好，.venv 不进仓库
+```
+
+下面的命令里，用到 `country` 的那条要走 `.venv/bin/python`，其余用系统 `python3` 就行。
 
 产出的东西有两种，都是发布时生成、放到对象存储与 CDN 上的**静态文件**：
 目录分片回答「这次散步算哪座城、这座城的画框在哪」，地图包回答「底图长什么样」。
@@ -13,7 +26,7 @@
 cd app/tools/CityAtlas
 UCDB=~/Downloads/GHS_UCDB_GLOBE_R2024A.gpkg
 
-python3 -m cityatlas selftest                 # 34 条自检，一秒跑完，不联网
+python3 -m cityatlas selftest                 # 73 条自检，一秒跑完，不联网
 python3 -m cityatlas reference                # 从设计稿 HTML 解包出 CityMap 参考实现
 python3 -m cityatlas snapshot --ucdb $UCDB    # 向 Overpass 要边界与要素快照 → snapshots/
 python3 -m cityatlas build    --ucdb $UCDB    # 只读快照，生成 out-sample/ 与 report.json
@@ -25,21 +38,32 @@ python3 -m cityatlas fixtures                 # 稿的上海、杭州 → Hereat
 **发布用的是 `country`，一个国家一轮**（`build` 只剩「Overpass 那条路的对照」这一个用途）：
 
 ```bash
-PBF=~/Downloads/japan-latest.osm.pbf          # Geofabrik 的区域包
-python3 -m cityatlas country --country Japan --pbf $PBF --ucdb $UCDB
+PBF=~/Downloads/japan-latest.osm.pbf          # Geofabrik 的区域包，只用来读边界与 place 点
+.venv/bin/python -m cityatlas country --country Japan --pbf $PBF --ucdb $UCDB
 python3 -m cityatlas review  --country Japan  # 跑完的取证页 → out/review-japan.html
 ```
+
+**一轮里的两个数据源分工不同**：行政边界、城市名单、中文名、市中心点从区域 pbf 读
+（`pbf`），道路、铁路、水系、绿地、海面从 Overture 拉（`overture`）。分工的判据是
+**名字**——Overture 的行政区在日本只有罗马字，「糸満市」会变成「Itoman」，而名字不只是
+展示层：中国的名单靠「市/区/县」的后缀筛，各国的市中心点靠 `spellings` 试多种写法认人。
+要素那边没有这个问题，翻回 OSM 的写法就能用（两边同源：Overture 是 OSM 的再打包）。
 
 补一个新国家要先往 `pbf.CITY_LEVELS` 加一行（哪几级、哪一级是覆盖层、名字怎么筛、
 现役的带什么标签），那里的注释写了怎么定。`country --only 上海 杭州` 或 `--limit 20`
 可以先跑通几座，但那时**不会重写分片**——按半份名单重写全局产物会静默丢掉别的城。
 
 跑完必核三件（`review` 那一页就是为它们出的）：名单里有没有非城市、有没有城的画框落在
-离城区十几公里外、有没有零字节的切片。日本那一轮三件全中，见
+离城区十几公里外、有没有城的包里一条线都没有。日本那一轮三件全中，见
 [实施文档的 S7](../../../docs/散步/2026-09-06-散步城市图-全球覆盖与缩放-实施.md)。
 
 **两轮不能同时跑。** `out/` 与 `registry.json` 是全球共用的：名册是全量重写，分片是
 「读盘上已有的再合并」，并发跑会互相丢号丢城。同一台机器上有别的 session 时先对顺序。
+
+**目录分片只留最近两代，任何一版地图包都不删。** 两条规则不是一回事：分片版本由
+`latest.json` 说了算，每次启动都问网络，旧代只服务持续离线的用户；而地图包取哪一版由
+**每台设备自己落库的号**决定，没升级的 App 会一直请求 `1.json.gz`，删掉旧包，那批人的
+城市图当场空掉。留两代（不是一代）是因为升版本那一轮要从上一代读别国的城。
 
 **抓取与生成是分开的两步**：快照一旦落盘，`build` 就只读文件不联网。
 「同一输入重跑逐字节相同」这条验收因此可核：gzip 的 mtime 写死 0、JSON 的键排序固定，
@@ -63,22 +87,27 @@ python3 -m cityatlas review  --country Japan  # 跑完的取证页 → out/revie
 | `~/Library/Caches/cityatlas/` | 区域 pbf 的中间产物（`cityatlas.WORK`）。**故意放在仓库外**：几个 GB、上千个文件、全可再生，而仓库一度在 iCloud 同步里，切片被拖慢十倍 |
 | `report.json` | 上一次 `build` 的体积与耗时，PRD 第 6 节的数字从这里来 |
 
-模块各管一件事：`geometry`（投影、简化、裁剪，零依赖）、`codec`（增量整数米编码）、
-`overpass`（快照）、`ghsl`（UCDB）、`boundary`（行政边界拼环）、`frame`（画框）、
-`mappack`（地图包）、`directory`（1° 分片）、`publish`（名册、continuity、索引页、许可）、
+模块各管一件事：`geometry`（投影、简化、裁剪——含「裁进矩形」与「把落在一组多边形里的那段裁掉」，零依赖）、`codec`（增量整数米编码）、
+`overture`（要素层：拉 parquet、按画框切、翻成 OSM 的写法）、`pbf`（区域包里的行政边界与
+place 点）、`overpass`（样例城的快照）、`ghsl`（UCDB）、`boundary`（行政边界拼环）、`frame`（画框）、
+`mappack`（地图包）、`directory`（1° 分片）、`publish`（名册、continuity、索引页、许可、目录留两代）、
 `fixtures`（夹具）、`reference`（解包稿）。
 
 ## 三条与 PRD 第 6 节不同的地方
 
 这三条都是 S0 实测之后改的，**需要产品拍板**；PRD 已按本文回写，结论那栏留空的仍待决。
 
-### 1. 输入不是 Geofabrik extract，是 Overpass 快照
+### 1. 输入不是 Geofabrik extract，是区域 pbf 加 Overture
 
-PRD 写「OSM 区域快照（Geofabrik extract）」。管线要的是画框内的道路水系绿地与一座城的
-行政边界，都是局部查询；Geofabrik 的最小分区（china-latest）是 1.5 GB 的 PBF，
-解析它要 protobuf 与一套索引，换来的是同一批要素。Overpass 的 bbox 查询直接给出这批要素，
-且快照落盘之后就是管线唯一的输入。
-城市数量涨到几百上千、Overpass 不再合适时，换的是产出快照的那一步，下游一步都不用动。
+PRD 写「OSM 区域快照（Geofabrik extract）」。这一条走过三版，末尾那句话是每一版都兑现的
+那一句：**换的是产出要素的那一步，下游一步都不用动。**
+
+1. S0：七座样例城走 Overpass 的 bbox 查询（`overpass`，今天只剩对照用途）。
+2. S7：城市涨到上千座，逐城一次三四分钟不成立了，改成区域 pbf 一趟切完（`pbf`）。
+3. 2026-09-08：要素层换 Overture 的 parquet（`overture`），行政边界与名单仍读区域 pbf。
+   osmium 逐城切 1739 座要两小时，换成「一趟拉、SQL 切」是十分钟出头。
+
+三版的接口切在同一处——一份 `{"elements": [...]}`，`mappack` 认的一直是它。
 
 ### 2. 画框的中心取 `admin_centre`，尺寸沿用稿
 
@@ -127,10 +156,13 @@ UCDB 按 CC BY 4.0 发布（© European Union），署名义务与 ODbL 并列�
 
 ## 已知缺口
 
-* ~~**岸线**~~ **2026-09-07 补上，但补在 App 侧，管线一行没改**：`natural=coastline` 仍按线
-  存进包的 `coastline` 一列，闭合成海面由 `CityCoastline`（App）在解包时做。放这一头是因为
-  它是同一段几何，而放进管线要重跑一遍全国、重传八十五兆，只为换一个解包时算得出来的东西。
-  接链、去重、沿画框顺时针闭合、岛按原绕向挖洞——四步与踩过的坑记在
+* ~~**岸线**~~ **2026-09-08 换成海面本身**：`coastline` 那一列还在，装的东西换了——先前是
+  被画框裁碎的岸线线段，App 侧接链、去重、沿画框围成海面；现在是**闭合环**，管线裁到画框、
+  把海面外环摆成顺时针、岛摆成逆时针，App 只按绕向填（`CityCoastline` 从两百行剩三十行）。
+  能这么换是因为 Overture 直接给海面的**面**，那三步在管线里是现成的（`geometry.clip_ring`），
+  在 App 里要从散线重新推。换语义必须升 `mapDataVersion`（1 → 2）：旧版 App 拿到闭合环
+  会走「一条开放链都没有」那条退路，把整个画框铺成海。
+  接链那一版与踩过的坑记在
   [09-06 全球覆盖实施 S6](../../../docs/散步/2026-09-06-散步城市图-全球覆盖与缩放-实施.md)。
 * **目录分片的完整性**：分片里只有 `cities.json` 列出的城市。真正的目录要能回答
   「这一格里所有的城」，那需要按格扫描全球的 `admin_level` 边界，并解决市级层号各国不同
