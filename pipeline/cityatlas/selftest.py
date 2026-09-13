@@ -150,6 +150,10 @@ def run() -> None:
     checks += _still_water_clip()
     checks += _sea_winding()
     checks += _english_names()
+    checks += _gates()
+    checks += _product_gates()
+    checks += _city_name_rule()
+    checks += _lost_ring_members()
 
     print(f"selftest 通过，{checks} 条")
 
@@ -518,3 +522,234 @@ def _ring_area_sign(ring) -> float:
         (x0, y0), (x1, y1) = ring[index], ring[(index + 1) % len(ring)]
         total += x0 * y1 - x1 * y0
     return total
+
+
+def _gates() -> int:
+    """出包闸门：每一条都要**两面都验到**。
+
+    只验「对的输入能过」是假绿——那种自检在闸门被改坏之后照样通过。所以每条都配一个
+    该红的输入：名单塌了、旧町村混进来了、画框被量成窄缝、大城不在名单里、锚点大批
+    退到外接框。它们就是日本那一轮真实踩过的五种形状。
+
+    闸门 2 那条正反尤其要紧：**跨级包含必须放行**（地级市包着县级市是设计内的，
+    分片的平局规则就是为它写的），**同级重叠必须拦下**（那是已撤销的旧单位的特征）。
+    一条规则同时要做到这两件，写错任何一边都会让中国或日本整轮跑不出来。
+    """
+    from types import SimpleNamespace
+
+    from . import gates
+    from .boundary import Boundary
+    from .frame import Frame
+
+    def city(name, *, level, half, frame_half_m=20000, anchor="ucdb", covered=True,
+             lon=120.0, lat=29.0):
+        polygons = [{"o": [(lon - half, lat - half), (lon + half, lat - half),
+                           (lon + half, lat + half), (lon - half, lat + half)], "i": []}]
+        boundary = Boundary(osm_relation=0, admin_level=level, name_zh=name, name_local=name,
+                            polygons=polygons)
+        frame = Frame(lon, lat, frame_half_m * 2, int(frame_half_m * 2 * 1.25), anchor, covered)
+        return {"name": name, "boundary": boundary, "frame": frame}
+
+    # 一片建成区：0.2° 见方，正好铺在 (120, 29) 上
+    patch = [{"o": [(119.8, 28.8), (120.2, 28.8), (120.2, 29.2), (119.8, 29.2)], "i": []}]
+    centre = SimpleNamespace(uc_id=1, name="Test", country="Testland",
+                             population=5e6, area_km2=400.0, lon=120.0, lat=29.0)
+    ucdb = SimpleNamespace(centres_intersecting=lambda box: [centre],
+                           polygons=lambda uc_id: patch,
+                           centres_in=lambda country: [centre])
+    rule: dict = {}
+
+    def run(cities, cover=(4,)):
+        results = gates.check_selection(cities, ucdb=ucdb, country="Testland",
+                                        cover_levels=cover, rule=rule)
+        return {result.number: result.ok for result in results}
+
+    # 一座正常的城：0.4° 的地盘、45 km 的画框，盖得住那片建成区
+    normal = city("正常市", level=4, half=0.2, frame_half_m=22500)
+    _assert(all(run([normal]).values()), f"一座正常的城不该有闸门报红：{run([normal])}")
+
+    # 1 · 覆盖层指错层：这一国的城全在 4 级，`cover` 却写了 7
+    _assert(run([normal], cover=(7,))[1] is False, "覆盖层是空集时闸门 1 没拦")
+
+    # 2 · 同级重叠（旧町村）vs 跨级包含（地级市盖县级市）
+    same_level = city("旧町", level=4, half=0.05)
+    _assert(run([normal, same_level])[2] is False, "同级的两座城重叠了，闸门 2 没拦")
+    lower_level = city("下辖县级市", level=6, half=0.05)
+    _assert(run([normal, lower_level])[2] is True,
+            "跨级包含被拦了——地级市包着县级市是设计内的，拦它等于中国整轮跑不出来")
+
+    # 3 · 画框被量成窄缝（大阪那次）：地盘照旧，画框缩到 2 km
+    narrow = city("窄缝市", level=4, half=0.2, frame_half_m=1000)
+    _assert(run([narrow])[3] is False, "画框盖不住自己那片建成区，闸门 3 没拦")
+
+    # 4 · 名单塌了：只剩一座离那片建成区很远的城（东京被安给古河市那次）
+    far = city("远方市", level=4, half=0.05, lon=122.0, lat=31.0)
+    _assert(run([far])[4] is False, "人口最多的建成区没有城，闸门 4 没拦")
+
+    # 6 · 锚点大批退到外接框中心（日本加 village 之前那 293 座）
+    fallback = city("没心市", level=4, half=0.2, frame_half_m=22500, anchor="bbox")
+    _assert(run([fallback])[6] is False, "锚点全退到外接框，闸门 6 没拦")
+    _assert(run([normal, fallback] * 30)[6] is False, "一半退到外接框，闸门 6 没拦")
+
+    # 没有建成区的城（自治州、离岛的村）不参与闸门 3——那种城由闸门 7 在产物上管
+    bare = city("无城区州", level=4, half=0.5, frame_half_m=1200, covered=False)
+    _assert(run([normal, bare])[3] is True, "没有建成区的城不该被闸门 3 判违规")
+
+    return 9
+
+
+def _product_gates() -> int:
+    """产物那一组闸门（分片的平局、空包）。
+
+    这一组先前只在真数据上跑过，没有自检——而它守的恰恰是这条管线最贵的两次事故：
+    义乌被算成金华（分片顺序），以及包里一条线都没有的城。**没有回归测试的闸门，
+    会在下一个人改动 `directory.shard` 或 `review.road_count` 时悄悄失效**，
+    而那种失效没有任何征兆：闸门照常打印「过」。
+
+    所以这里造一份假的 `out/`，正反都验到：顺序颠倒要红、同一座城在不同格里报不同面积
+    要红（那是 `areaKm2` 被写成「裁到格内那块」的形状）、空包超过基线要红、不超过要过。
+    """
+    import gzip
+    import json
+    import tempfile
+    from pathlib import Path
+
+    from . import MAP_DATA_VERSION, gates
+    from . import DIRECTORY_VERSION as version
+
+    def write(path, payload):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with gzip.open(path, "wt", encoding="utf-8") as handle:
+            json.dump(payload, handle)
+
+    def entry(city_id, area):
+        return {"cityID": city_id, "name": city_id, "areaKm2": area}
+
+    def build(out, cells, packages):
+        for cell, entries in cells.items():
+            write(out / "directory" / f"v{version}" / f"{cell}.json.gz", {"cities": entries})
+        for city_id, roads in packages.items():
+            write(out / "package" / city_id / f"{MAP_DATA_VERSION}.json.gz", {"roads": roads})
+
+    registry = {"a": {"cityID": "c00001", "name": "大城", "country": "Testland"},
+                "b": {"cityID": "c00002", "name": "空城", "country": "Testland"}}
+    full = {"1": [[0, 0]], "2": [], "3": [], "4": []}
+    empty = {"1": [], "2": [], "3": [], "4": []}
+
+    def run(cells, packages, rule=None):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            build(out, cells, packages)
+            results = gates.check_products(out, country="Testland", registry=registry,
+                                           rule=rule or {})
+            return {result.number: result.ok for result in results}
+
+    # 正常：小城排在大城前面，同一座城在两格里报同一个面积，两座城都有路
+    ok = run({"29_120": [entry("c00002", 50.0), entry("c00001", 900.0)],
+              "30_120": [entry("c00001", 900.0)]},
+             {"c00001": full, "c00002": full})
+    _assert(ok[5] and ok[7], f"一份正常的产物不该有闸门报红：{ok}")
+
+    # 5 · 顺序颠倒（义乌那次的形状：大城排在了小城前面）
+    flipped = run({"29_120": [entry("c00001", 900.0), entry("c00002", 50.0)]},
+                  {"c00001": full, "c00002": full})
+    _assert(flipped[5] is False, "分片没按面积升序排，闸门 5 没拦")
+
+    # 5 · 同一座城在两格里报了不同的面积（`areaKm2` 被写成裁到格内那块）
+    inconsistent = run({"29_120": [entry("c00001", 900.0)],
+                        "30_120": [entry("c00001", 120.0)]},
+                       {"c00001": full})
+    _assert(inconsistent[5] is False, "同一座城在不同格里面积不一致，闸门 5 没拦")
+
+    # 7 · 空包：基线 0 时要红，把这一座认下来（基线 1）之后才过
+    packages = {"c00001": full, "c00002": empty}
+    strict = run({"29_120": [entry("c00001", 900.0)]}, packages)
+    _assert(strict[7] is False, "包里一条路都没有，闸门 7 没拦")
+    relaxed = run({"29_120": [entry("c00001", 900.0)]}, packages,
+                  rule={"gates": {"empty_packages": 1}})
+    _assert(relaxed[7] is True, "已经写进基线的空包不该再拦一次")
+
+    return 6
+
+
+def _city_name_rule() -> int:
+    """名单规则只此一份（`pbf.city_name`）：读边界与补齐成员两处问的是同一个判据。
+
+    两处各写一遍的后果不是报错，是**补齐的范围与名单的范围悄悄错开**——错开的那几座
+    城照样不在名单里，而线上看不出任何异常，正是福建七市躺了三代目录的那个形状。
+    """
+    from . import pbf as pbf_module
+
+    rule = pbf_module.CITY_LEVELS["China"]
+    _assert(pbf_module.city_name({"admin_level": "5", "name": "福州市"}, rule) == "福州市",
+            "地级市没进名单")
+    _assert(pbf_module.city_name({"admin_level": "4", "name": "广东省"}, rule) is None,
+            "省被当成了一座城")
+    _assert(pbf_module.city_name({"admin_level": "4", "name": "新疆维吾尔自治区"}, rule) is None,
+            "自治区以「区」结尾，被当成了一座城")
+    _assert(pbf_module.city_name({"admin_level": "5", "name": "喀什地区"}, rule) is None,
+            "「地区」是一片区域，不是一座城")
+    _assert(pbf_module.city_name({"admin_level": "3", "name": "香港"}, rule) == "香港",
+            "专名白名单没认出香港")
+    _assert(pbf_module.city_name({"admin_level": "4", "name": "香港"}, rule) is None,
+            "香港在 4 级还有一个几乎重合的关系，白名单该按级数把它挡掉")
+    _assert(pbf_module.city_name({"admin_level": "7", "name": "福州市"}, rule) is None,
+            "不在 levels 里的层级该整层挡掉")
+    # 日本靠 `ref` 挡已经撤销的町村：必须带的标签缺了就不是现役单位
+    japan = pbf_module.CITY_LEVELS["Japan"]
+    _assert(pbf_module.city_name({"admin_level": "7", "name": "糸満市", "ref": "47211"}, japan)
+            == "糸満市", "现役的市町村没进名单")
+    _assert(pbf_module.city_name({"admin_level": "7", "name": "糸満市"}, japan) is None,
+            "没有 ref 的旧町村该被挡掉")
+    return 9
+
+
+def _lost_ring_members() -> int:
+    """被区域文件裁掉的担环成员：认得出、且只认担环的那些。
+
+    `osmium export` 组不成环时**静默跳过整个关系**，一条错误都不报。所以这条判据是
+    整个修复的支点：认不出缺的是谁，福州那一排市就仍然只是「名单里没有」。
+    """
+    import tempfile
+    from pathlib import Path
+
+    from . import pbf as pbf_module
+
+    rule = pbf_module.CITY_LEVELS["China"]
+    # w11 担外环、在文件外 → 要补；w12 是 subarea，缺了不影响面 → 不补；
+    # w13 属于不进名单的「某地区」→ 不补
+    sample = """<?xml version="1.0" encoding="UTF-8"?>
+<osm version="0.6">
+  <node id="1" lat="26.00" lon="119.00"/>
+  <node id="2" lat="26.10" lon="119.10"/>
+  <way id="10"><nd ref="1"/><nd ref="2"/></way>
+  <relation id="100">
+    <member type="way" ref="10" role="outer"/>
+    <member type="way" ref="11" role="outer"/>
+    <member type="way" ref="12" role="subarea"/>
+    <tag k="type" v="boundary"/>
+    <tag k="boundary" v="administrative"/>
+    <tag k="admin_level" v="5"/>
+    <tag k="name" v="%s"/>
+  </relation>
+  <relation id="101">
+    <member type="way" ref="13" role="outer"/>
+    <tag k="type" v="boundary"/>
+    <tag k="boundary" v="administrative"/>
+    <tag k="admin_level" v="5"/>
+    <tag k="name" v="某地区"/>
+  </relation>
+</osm>
+""" % "福州市"
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder) / "sample.osm"
+        path.write_text(sample, encoding="utf-8")
+        lost = pbf_module.missing_city_members(path, rule)
+    # 键是关系 id：名单那头靠它认出「边界是补出来的」，把邻国的单位挡在兜底那条之外
+    _assert(lost == {"100": ["11"]}, f"该补的成员认错了：{lost}")
+
+    # OPL 把中文写成 `%十六进制%`。不还原就认不出任何一个名字，而名字正是名单的判据
+    _assert(pbf_module._opl_unescape("%798f%%5dde%%5e02%") == "福州市", "OPL 的中文没还原")
+    _assert(pbf_module._opl_unescape("Fuzhou%20%City") == "Fuzhou City", "OPL 的空格没还原")
+    _assert(pbf_module._opl_unescape("350100") == "350100", "不带转义的值被改动了")
+    return 4

@@ -1224,6 +1224,13 @@
       "name": "永春县",
       "slug": "ch-2666967"
     },
+    "2666969": {
+      "assignedInDirectoryVersion": 4,
+      "cityID": "c03228",
+      "country": "China",
+      "name": "泉州市",
+      "slug": "ch-2666969"
+    },
     "2666979": {
       "assignedInDirectoryVersion": 1,
       "cityID": "c00657",
@@ -3092,6 +3099,13 @@
       "country": "China",
       "name": "山南市",
       "slug": "ch-2743978"
+    },
+    "2744623": {
+      "assignedInDirectoryVersion": 4,
+      "cityID": "c03236",
+      "country": "China",
+      "name": "日喀则市",
+      "slug": "ch-2744623"
     },
     "2744886": {
       "assignedInDirectoryVersion": 1,
@@ -9162,12 +9176,26 @@
       "name": "诏安县",
       "slug": "ch-3242121"
     },
+    "3242122": {
+      "assignedInDirectoryVersion": 4,
+      "cityID": "c03234",
+      "country": "China",
+      "name": "漳州市",
+      "slug": "ch-3242122"
+    },
     "3242134": {
       "assignedInDirectoryVersion": 2,
       "cityID": "c01590",
       "country": "Japan",
       "name": "橿原市",
       "slug": "ja-3242134"
+    },
+    "3242930": {
+      "assignedInDirectoryVersion": 4,
+      "cityID": "c03231",
+      "country": "China",
+      "name": "厦门市",
+      "slug": "ch-3242930"
     },
     "3243082": {
       "assignedInDirectoryVersion": 1,
@@ -9792,12 +9820,26 @@
       "name": "仓山区",
       "slug": "ch-3263964"
     },
+    "3263965": {
+      "assignedInDirectoryVersion": 4,
+      "cityID": "c03232",
+      "country": "China",
+      "name": "长乐区",
+      "slug": "ch-3263965"
+    },
     "3263966": {
       "assignedInDirectoryVersion": 1,
       "cityID": "c00369",
       "country": "China",
       "name": "福清市",
       "slug": "ch-3263966"
+    },
+    "3263969": {
+      "assignedInDirectoryVersion": 4,
+      "cityID": "c03235",
+      "country": "China",
+      "name": "连江县",
+      "slug": "ch-3263969"
     },
     "3263970": {
       "assignedInDirectoryVersion": 1,
@@ -9813,6 +9855,13 @@
       "name": "马尾区",
       "slug": "ch-3263971"
     },
+    "3263974": {
+      "assignedInDirectoryVersion": 4,
+      "cityID": "c03237",
+      "country": "China",
+      "name": "平潭县",
+      "slug": "ch-3263974"
+    },
     "3263976": {
       "assignedInDirectoryVersion": 1,
       "cityID": "c01366",
@@ -9820,12 +9869,26 @@
       "name": "永泰县",
       "slug": "ch-3263976"
     },
+    "3263977": {
+      "assignedInDirectoryVersion": 4,
+      "cityID": "c03230",
+      "country": "China",
+      "name": "福州市",
+      "slug": "ch-3263977"
+    },
     "3276845": {
       "assignedInDirectoryVersion": 1,
       "cityID": "c00295",
       "country": "China",
       "name": "荔城区",
       "slug": "ch-3276845"
+    },
+    "3276849": {
+      "assignedInDirectoryVersion": 4,
+      "cityID": "c03229",
+      "country": "China",
+      "name": "莆田市",
+      "slug": "ch-3276849"
     },
     "3277228": {
       "assignedInDirectoryVersion": 1,
@@ -9840,6 +9903,20 @@
       "country": "China",
       "name": "古田县",
       "slug": "ch-3277229"
+    },
+    "3277232": {
+      "assignedInDirectoryVersion": 4,
+      "cityID": "c03238",
+      "country": "China",
+      "name": "霞浦县",
+      "slug": "ch-3277232"
+    },
+    "3277236": {
+      "assignedInDirectoryVersion": 4,
+      "cityID": "c03233",
+      "country": "China",
+      "name": "宁德市",
+      "slug": "ch-3277236"
     },
     "3278462": {
       "assignedInDirectoryVersion": 1,
@@ -22587,5 +22664,5 @@
       "slug": "ch-9638643"
     }
   },
-  "nextSerial": 3228
+  "nextSerial": 3239
 }

@@ -31,7 +31,7 @@ from . import boundary as boundary_module
 from . import compare as compare_module
 from . import directory as directory_module
 from . import fixtures as fixtures_module
-from . import mappack, overpass, overture, pbf, publish, reference, review, selftest
+from . import gates, mappack, overpass, overture, pbf, publish, reference, review, selftest
 from . import frame as frame_module
 from .frame import compute as compute_frame, covering_centres, from_admin_and_ghsl
 from .ghsl import UCDB
@@ -114,8 +114,9 @@ def cmd_snapshot(args) -> None:
               f"{data.get('osm3s', {}).get('timestamp_osm_base', '未知')}")
 
 
-def _select_cities(units: list[dict], ucdb, cover_levels: tuple[int, ...],
-                   region_suffix: tuple[str, ...] = ()) -> list[dict]:
+def _select_cities(units: list[dict], ucdb, country: str, cover_levels: tuple[int, ...],
+                   region_suffix: tuple[str, ...] = (),
+                   patched: frozenset[str] | set[str] = frozenset()) -> list[dict]:
     """从行政单位里选出城市名单（规则见 `frame` 的「城市名单」一节）。
 
     `cover_levels` 是**覆盖层**：铺满国土、一定收、不会被别座城吞掉的那一层
@@ -139,7 +140,15 @@ def _select_cities(units: list[dict], ucdb, cover_levels: tuple[int, ...],
                          "area": (box[2] - box[0]) * (box[3] - box[1])})
 
     patches = []
-    for centre in ucdb.centres():
+    # **只认这个国家的建成区**（GADM 国名，`centres_in`）。先前这里遍历全球，而名单
+    # 排除邻国与台湾的城靠的是另一件事：那些关系的成员 way 落在区域文件的裁切范围外、
+    # 组不成面。那是**侥幸**，不是判据——2026-09-13 把裁掉的成员补回来之后侥幸就没了，
+    # 高雄市、阿拉木图州、海兰泡市这些以「市」「州」结尾的邻国单位会照样圈住自己那片
+    # 建成区，直接进中国的名单（台湾在补国家的批次二，名单要人拍板才发得出去）。
+    # 港澳不受影响：GADM 把它们算在 China 里，`centres_in("China")` 本来就含着。
+    # 顺带这一步快了一大截——全球一万多片建成区对上三千多个单位，其中还有几万顶点的
+    # 邻国巨型面，「点在多边形内」要算七分钟以上。
+    for centre in ucdb.centres_in(country):
         points = [point for polygon in ucdb.polygons(centre.uc_id) for point in polygon["o"]]
         if not points:
             continue
@@ -152,6 +161,25 @@ def _select_cities(units: list[dict], ucdb, cover_levels: tuple[int, ...],
     entries: dict = {}
 
     def offer(unit, patch):
+        """一个单位认领一片建成区。同一个单位认领了好几片时，留下**占地最大**的那片。
+
+        那一片就当成它的主城，`drop_swallowed` 拿它判断「这个区县的地盘上是不是已经有
+        别座城的主城铺过来」。
+
+        **这条判据是有问题的，但 2026-09-13 试过换、又换了回来。** 郊县那片摊得开的
+        建成区常常比市区占地更大：黑河市因此把北安那片（11 万人）当成了自己的主城，
+        把真正的市区（Heihe，13 万）挤掉，`drop_swallowed` 转手就把北安市当成黑河主城的
+        一部分剔了。先前没露馅，是因为布拉戈维申斯克那片（俄罗斯，19 万）占地更大、
+        一直顶在那里——也就是说黑河市的主城一直被安在俄罗斯的建成区上，错得没人看见。
+
+        换成「留人最多的那片」能把北安修回来，**代价是翻动十九座不相干的城**
+        （新增三河、奎屯、汉川、江都、滑县、灵山、耀州、高港、龙州，同时丢掉满洲里、
+        克拉玛依区、兴宁、嫩江、桂平、耒阳、靖江……），而且方向不一致：有的区被地级市
+        吞了，有的区反而从被吞变成独立。那说明判据在边界上抖，不是一处干净的修复——
+        「主城该怎么判」值得单独一轮做，带上全量画框的前后对比，不该搭在补边界成员
+        这件事上顺手换掉。代价记在实施文档里：北安归黑河市、河口归红河州，都是上级，
+        不会判成「这一格没有城」。
+        """
         key = unit["osm_id"]
         if key not in entries or patch["area"] > entries[key]["area"]:
             entries[key] = {"unit": unit, "probe": patch["probe"],
@@ -161,9 +189,22 @@ def _select_cities(units: list[dict], ucdb, cover_levels: tuple[int, ...],
     for patch in patches:
         for unit in covering:
             box = unit["bbox"]
-            if any(box[0] <= x <= box[2] and box[1] <= y <= box[3]
-                   and unit["boundary"].contains((x, y)) for x, y in patch["probe"]):
-                offer(unit, patch)
+            inside = sum(1 for x, y in patch["probe"]
+                         if box[0] <= x <= box[2] and box[1] <= y <= box[3]
+                         and unit["boundary"].contains((x, y)))
+            if not inside:
+                continue
+            # **边界补过成员的单位，要完整包住这片建成区才算数。** 一片建成区沾到边就算
+            # 认领，是为了连绵都市区——珠三角那片跨广州、深圳、佛山、东莞，谁也包不住它，
+            # 四家都得算（见上面「城市名单」那一节）。但中俄、中越边境上，黑河与布拉戈
+            # 维申斯克、东兴与芒街在 GHSL 里是**一片跨境建成区**（国别算中国），于是对岸的
+            # 阿穆尔州、远东联邦管区、广宁市也沾到了边，跟着进了中国的名单。
+            # 判据同兜底那条：区域文件按国界裁，边界缺成员说明这个单位跨境或者主体在境外，
+            # 那它只有**整片**圈住一片本国建成区时才确凿是本国的城。福州、泉州、日喀则
+            # 这些境内的城，自己那片建成区本来就完整落在自己界内，不受影响。
+            if unit["osm_id"] in patched and inside < len(patch["probe"]):
+                continue
+            offer(unit, patch)
         unit = frame_module.smallest_containing(patch["probe"], prepared)
         if unit is not None and unit["level"] not in cover_levels:
             offer(unit, patch)
@@ -172,7 +213,17 @@ def _select_cities(units: list[dict], ucdb, cover_levels: tuple[int, ...],
     # 一片城市中心都没有，可它们确实是市（2026-09-07 实测，按「有建成区」筛会把这三座
     # 从名单里漏掉，而上一版名单里有）。没有建成区不代表没有城，只代表画框得靠
     # OSM 的市中心点来定——那条退路 `from_admin_and_ghsl` 里已经有了。
+    #
+    # **但边界补过成员的不在此列**（`patched`）。上面两条规则都锚在本国的建成区上，
+    # 邻国的单位进不来；只有这条兜底不问建成区，于是 2026-09-13 补齐成员之后，
+    # 阿穆尔州、远东联邦管区、广宁市这些以「州」「市」结尾的邻国单位直接进了中国名单。
+    # 判据是**区域文件按国界裁**：边界在这份文件里本来就完整，主体就在境内；缺了成员
+    # 要从上游补，说明它跨境或者主体在境外。昌都、山南、林芝的边界本来就完整，照收；
+    # 高雄市、金门县这些台湾的单位缺着大半成员，挡在外面（台湾在补国家的批次二，
+    # 名单要人拍板才发得出去）。
     for unit in covering:
+        if unit["osm_id"] in patched:
+            continue
         entries.setdefault(unit["osm_id"],
                            {"unit": unit, "probe": [], "box": unit["bbox"], "area": 0.0})
 
@@ -195,10 +246,11 @@ def cmd_country(args) -> None:
                          f"往 pbf.CITY_LEVELS 里加一行（出处见那里的注释）")
     # 半份名单（`--only` / `--limit`）不重写分片，也不该用整国的标尺过闸门
     partial = bool(args.only or args.limit)
-    levels, suffix, exclude = rule["levels"], rule.get("suffix"), rule.get("exclude", ())
-    cover_levels, require = tuple(rule["cover"]), rule.get("require", ())
+    # 名字那几条判据（后缀、排除、专名、必须带的标签）不在这里解构：它们只此一份，
+    # 在 `pbf.city_name` 里——读边界与补齐成员两处都问它。
+    levels = rule["levels"]
+    cover_levels = tuple(rule["cover"])
     region_suffix = tuple(rule.get("region_suffix", ()))
-    names = rule.get("names", ())
 
     work = WORK / args.country.lower().replace(" ", "-")
     work.mkdir(parents=True, exist_ok=True)
@@ -208,24 +260,12 @@ def cmd_country(args) -> None:
     # 文件名带上层级：改了要哪几级还读旧缓存，会静默少掉一整层
     # （2026-09-07 实测：加了区县那一级，读到的仍是只有 4/5 级的那份）
     tag = "-".join(map(str, levels))
-    boundaries_path = pbf.admin_boundaries(source, work / f"admin-{tag}.geojsonseq", levels)
+    boundaries_path, patched = pbf.admin_boundaries(source, work / f"admin-{tag}.geojsonseq", rule)
 
     cities = []
     for osm_id, tags, polygons in pbf.read_boundaries(boundaries_path):
-        name = boundary_module.chinese_name(tags) or tags.get("name")
+        name = pbf.city_name(tags, rule)
         if not name:
-            continue
-        # 专名白名单先过：特别行政区按后缀筛不出来，而同名的关系可能不止一个
-        # （香港在 3 级与 4 级各有一份），所以这条白名单连级数一起认（`pbf.CITY_LEVELS`）
-        if name in names:
-            if int(tags.get("admin_level", 0)) != names[name]:
-                continue
-        else:
-            if suffix and not name.endswith(tuple(suffix)):
-                continue
-            if exclude and name.endswith(tuple(exclude)):
-                continue
-        if any(key not in tags for key in require):
             continue
         cities.append({"name": name,
                        "name_local": tags.get("name") or name,
@@ -237,7 +277,7 @@ def cmd_country(args) -> None:
 
     # 名单不是「读到的边界全都要」，而是按 `frame` 那一节的两条规则合成：
     # 有建成区的地级市 / 直辖市，加上完整包住一片独立建成区、且不属于任何主城的区县。
-    cities = _select_cities(cities, ucdb, cover_levels, region_suffix)
+    cities = _select_cities(cities, ucdb, args.country, cover_levels, region_suffix, patched)
     print(f"      选出 {len(cities)} 座城", flush=True)
     if args.limit:
         cities = cities[:args.limit]
@@ -282,6 +322,30 @@ def cmd_country(args) -> None:
               f"{'、'.join(without_centre[:8])}{' 等' if len(without_centre) > 8 else ''}", flush=True)
     if not boxes:
         raise SystemExit("一座城都没选出来——`--only` 给的名字要与名单里的写法一致（如「上海市」）")
+
+    # 闸门：名单与画框这一组。**拦在抓要素之前**——到这里只花了几分钟，往下就是
+    # 几十分钟的抓取与出包，而这一组拦的恰恰是「名单塌了」「画框错了」这类
+    # 越往后越贵、发出去就不可逆的失败（`gates.py`）。
+    # 半份名单（`--only` / `--limit`）不过闸门：那时的标尺本来就不是整国的。
+    forced: list[str] = []
+    if not partial:
+        forced += [f"{result.number} · {result.title}：{result.detail}"
+                   for result in gates.report(
+                       gates.check_selection(cities, ucdb=ucdb, country=args.country,
+                                             cover_levels=cover_levels, rule=rule),
+                       force=args.force, stage="名单与画框")]
+    if args.dry_run:
+        # 名单与画框的体检。这两步只花几分钟（边界有缓存时更快），而往下是几十分钟的
+        # 抓取与出包——补一个新国家时先跑这一趟，闸门过了再跑真的。
+        #
+        # **半份名单那句话不能照说「已过闸门」**：`--only` / `--limit` 下闸门整组都被跳过
+        # （上面那个 `if not partial`），而操作者在终端上只看得到这一句。说它过了，
+        # 等于把一次没做的检查报成做过了。
+        print("\n--dry-run：只算名单与画框，不抓要素、不出包。"
+              + ("闸门**没跑**——`--only` / `--limit` 是半份名单，不该用整国的标尺。"
+                 if partial else "闸门已过。"), flush=True)
+        return
+
     print(f"[3/4] 取 {len(boxes)} 座城的要素（Overture {overture.RELEASE}）", flush=True)
     # 抓的是**所有画框的并集**，不是国土外接框：扫描包围盒是远程查询的主要成本，
     # 而画框加起来常常只占国土的一部分（`--only` 跑一座城时就只拉那一座的框）。
@@ -298,10 +362,12 @@ def cmd_country(args) -> None:
     print(f"      行政边界的 OSM 截至 {stamp['osmBase']}，要素来自 Overture {overture.RELEASE}", flush=True)
     _emit(cities, lambda slug: overture.to_elements(cut_path, slug, con=connection),
           ucdb=ucdb, ghsl=Path(args.ucdb).name, stamp=stamp,
-          out=ROOT / "out", country=args.country, partial=partial)
+          out=ROOT / "out", country=args.country, partial=partial,
+          rule=rule, force=args.force, forced=forced)
 
 
-def _emit(cities, snapshot_of, *, ucdb, ghsl, stamp, out, country: str, partial: bool = False) -> None:
+def _emit(cities, snapshot_of, *, ucdb, ghsl, stamp, out, country: str, partial: bool = False,
+          rule: dict | None = None, force: bool = False, forced: list[str] | None = None) -> None:
     """出包 + 分片 + 索引页。与 `cmd_build` 的尾巴同一件事，暂各写一份——
     两条路的产物格式一致之后再合并。
 
@@ -368,6 +434,14 @@ def _emit(cities, snapshot_of, *, ucdb, ghsl, stamp, out, country: str, partial:
     shards = _write_shards(out, shard_cities, mine=previously_mine | produced, licenses=licenses)
     _write_json(out / "directory" / "latest.json", publish.latest(DIRECTORY_VERSION, ghsl_stamp))
 
+    # 闸门：产物这一组。要有分片与包才问得了，所以在这里而不是上面那一处。
+    notes = list(forced or [])
+    notes += [f"{result.number} · {result.title}：{result.detail}"
+              for result in gates.report(
+                  gates.check_products(out, country=country, registry=registry["cities"],
+                                       rule=rule or {}),
+                  force=force, stage="产物")]
+
     # 索引页也得跟着重写。它是 CDN 的落地页，写着这份数据有多少座城、出自哪一刻的 OSM、
     # 授权是什么——`cmd_build` 一直在写，这条路上漏了，于是全国跑完之后公网上挂的还是
     # 七座样例城那一版（2026-09-07 实测）。
@@ -377,7 +451,8 @@ def _emit(cities, snapshot_of, *, ucdb, ghsl, stamp, out, country: str, partial:
                            generated_at=dt.datetime.now(dt.UTC).strftime("%Y-%m-%d %H:%M UTC"),
                            osm_stamp=f"区域 pbf，OSM 数据截至 {stamp['osmBase']}",
                            pipeline_url=PIPELINE_URL, shards=shards,
-                           packages=[_package_row(package) for package in packages]),
+                           packages=[_package_row(package) for package in packages],
+                           forced_gates=notes),
         encoding="utf-8")
     print(f"      分片 {len(shards)} 个，索引页 {len(packages)} 座", flush=True)
 
@@ -637,6 +712,11 @@ def main() -> None:
     country.add_argument("--limit", type=int, default=0, help="只做前 N 座，用来先跑通")
     country.add_argument("--only", nargs="+", default=None,
                          help="只重做这几座（按中文名），其余产物原样留着")
+    country.add_argument("--dry-run", action="store_true",
+                         help="只算名单与画框、过一遍闸门就停，不抓要素也不出包")
+    country.add_argument("--force", action="store_true",
+                         help="闸门报红也往下走。放行的条目会写进索引页——那是它唯一能"
+                              "活过这次会话的地方（gates.py）")
     country.set_defaults(handler=cmd_country)
 
     review_page = sub.add_parser("review")

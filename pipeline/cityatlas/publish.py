@@ -161,6 +161,7 @@ INDEX_TEMPLATE = """<!doctype html>
 这些文件是从 OpenStreetMap 数据裁剪、简化得到的衍生数据库，按 ODbL 发布；下面列出全部文件与生成方法。<br>
 道路、铁路、水系、绿地与海面取自 Overture Maps 对 OSM 的再打包，行政边界与市中心点直接读 OSM 区域包。</p>
 
+{forced_gates}
 <h2>许可与来源</h2>
 <ul>
 <li>地图数据 © OpenStreetMap contributors、Overture Maps Foundation，按 <a href="https://opendatacommons.org/licenses/odbl/1-0/">ODbL v1.0</a> 提供。源数据快照：{osm_stamp}。</li>
@@ -188,7 +189,13 @@ INDEX_TEMPLATE = """<!doctype html>
 
 
 def index_page(*, directory_version: int, generated_at: str, osm_stamp: str, pipeline_url: str,
-               shards: list[dict], packages: list[dict]) -> str:
+               shards: list[dict], packages: list[dict], forced_gates: list[str] | None = None) -> str:
+    """`forced_gates` 是这一轮被 `--force` 放行的闸门。
+
+    它必须落在产物上而不是只打印在终端里：一次 `--force` 的后果活在 CDN 上、活到下一轮
+    重出为止，而那个会话第二天就没了。写在索引页上，任何人打开线上落地页都看得见
+    「这一代数据是带着哪几条已知问题发出去的」。
+    """
     shard_rows = "\n".join(
         "<tr><td>{cell}</td><td>{cities}</td><td><code>{path}</code></td><td>{size}</td></tr>".format(**row)
         for row in shards)
@@ -196,6 +203,14 @@ def index_page(*, directory_version: int, generated_at: str, osm_stamp: str, pip
         "<tr><td>{name}</td><td><code>{cityID}</code></td><td>{frame}</td>"
         "<td><code>{path}</code></td><td>{size}</td></tr>".format(**row)
         for row in packages)
+    forced = ""
+    if forced_gates:
+        items = "\n".join(f"<li>{note}</li>" for note in forced_gates)
+        forced = ('\n<h2>这一代放行过的闸门</h2>\n'
+                  '<p class="note">出包前的自动检查报红、由人按 <code>--force</code> 放行的条目。'
+                  '判据与每一条拦的是哪次事故见 <code>pipeline/cityatlas/gates.py</code>。</p>\n'
+                  f'<ul>\n{items}\n</ul>\n')
     return INDEX_TEMPLATE.format(
         directory_version=directory_version, generated_at=generated_at, osm_stamp=osm_stamp,
-        pipeline_url=pipeline_url, shard_rows=shard_rows, package_rows=package_rows)
+        pipeline_url=pipeline_url, shard_rows=shard_rows, package_rows=package_rows,
+        forced_gates=forced)

@@ -39,9 +39,16 @@ python3 -m cityatlas fixtures                 # 稿的上海、杭州 → Hereat
 
 ```bash
 PBF=~/Downloads/japan-latest.osm.pbf          # Geofabrik 的区域包，只用来读边界与 place 点
+.venv/bin/python -m cityatlas country --country Japan --pbf $PBF --ucdb $UCDB --dry-run
 .venv/bin/python -m cityatlas country --country Japan --pbf $PBF --ucdb $UCDB
 python3 -m cityatlas review  --country Japan  # 跑完的取证页 → out/review-japan.html
 ```
+
+**补一个新国家先跑 `--dry-run`**：它只算名单与画框、过一遍第一组闸门就停，几分钟；
+过了再跑那一小时。闸门（`gates.py`）七道，每一条都对着一次真踩过的坑，**红了硬停**——
+这批产物的失败是静默的（产物照常生成、体积正常，只是名单少一半，或者东京被安给了
+六十公里外的古河市）。确认这一国就该是这样，用 `--force` 放行；放行的条目会写进索引页，
+因为一次 `--force` 的后果活在 CDN 上，而那个会话第二天就没了。
 
 **一轮里的两个数据源分工不同**：行政边界、城市名单、中文名、市中心点从区域 pbf 读
 （`pbf`），道路、铁路、水系、绿地、海面从 Overture 拉（`overture`）。分工的判据是

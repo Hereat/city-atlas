@@ -88,11 +88,11 @@ def _thin(city: dict) -> dict:
     for tier, (fade_in, _) in enumerate(ROAD_LOD):
         if fade_in is not None and meters_per_pixel >= fade_in:
             break
-        roads.append(_visible_lines(city["roads"][str(tier + 1)], box))
+        roads.append(_visibleroad_count(city["roads"][str(tier + 1)], box))
     return {"name": city["name"], "nameLocal": city["nameLocal"],
             "frame": city["frame"], "defaultView": view,
             "roads": roads,
-            "rail": _visible_lines(city["rail"], box),
+            "rail": _visibleroad_count(city["rail"], box),
             "water": _visible_blocks(city["water"], box),
             "waterLines": [line for line in city["waterLines"] if _touches(line["p"], box)],
             "green": _visible_blocks(city["green"], box),
@@ -113,7 +113,7 @@ def _touches(flat: list[int], box) -> bool:
     return not (max_x < box[0] or min_x > box[2] or max_y < box[1] or min_y > box[3])
 
 
-def _visible_lines(lines: list, box) -> list:
+def _visibleroad_count(lines: list, box) -> list:
     return [line for line in lines if _touches(line, box)]
 
 
@@ -121,7 +121,13 @@ def _visible_blocks(blocks: list, box) -> list:
     return [block for block in blocks if _touches(block["o"], box)]
 
 
-def _lines(city: dict) -> int:
+def road_count(city: dict) -> int:
+    """这座城的包里有多少条路（四档合计）。
+
+    **「空包」的唯一判据**，取证页与出包闸门（`gates.py`）共用这一份：同一个问题
+    在两处各写一遍，迟早会漂成两个答案。判路而不判全部要素，是因为路是城市图的骨架——
+    只有水和绿地的那张图，用户看到的仍是一张空纸。
+    """
     return sum(len(city["roads"][tier]) for tier in city["roads"])
 
 
@@ -138,8 +144,8 @@ def _summary(packages, empties) -> dict:
         # 「名字排最后的那座」（实测拿到了一个生僻字打头的城）
         "largest": max(packages, key=lambda pair: pair[1])[0]["name"],
         "tails": sorted(tails.items(), key=lambda item: -item[1]),
-        "emptyish": [[city["name"], _lines(city)]
-                     for city, _ in sorted(packages, key=lambda p: _lines(p[0]))[:12]],
+        "emptyish": [[city["name"], road_count(city)]
+                     for city, _ in sorted(packages, key=lambda p: road_count(p[0]))[:12]],
         "empties": empties,
     }
 
@@ -153,7 +159,7 @@ def _empty_check(packages) -> dict:
     海面或山里时，切片有几百 KB、要素却接近零，旧判据一样拦不住，而那正是这一页
     最想抓的那种城。判据因此改成产物本身——这一座城的包里有没有线。
     """
-    empty = [[city["name"], city["cityID"]] for city, _ in packages if _lines(city) == 0]
+    empty = [[city["name"], city["cityID"]] for city, _ in packages if road_count(city) == 0]
     return {"total": len(packages), "bad": empty}
 
 
@@ -164,7 +170,7 @@ def _pick(packages) -> list[dict]:
     如果随机的十张都正常而最空的十张都空，问题就在那十座身上，不是面上的。
     """
     by_size = sorted(packages, key=lambda p: -p[1])
-    by_lines = sorted(packages, key=lambda p: _lines(p[0]))
+    by_lines = sorted(packages, key=lambda p: road_count(p[0]))
     taken: set[str] = set()
 
     def take(pairs, count):

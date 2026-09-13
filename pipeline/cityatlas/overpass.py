@@ -47,29 +47,66 @@ def fetch(query: str, cache: Path, *, refresh: bool = False) -> dict:
             return cached
         print(f"{cache.name}：查询变了，重新抓")
 
+    data = json.loads(_request(query))
+    if "remark" in data:
+        # 超时的 Overpass 返回 200、合法 JSON、以及**超时前收到的那部分要素**。
+        # 落盘就等于把半份数据缓存成了「输入」，而 `mappack.covers` 拦不住它：
+        # 半份要素通常照样铺满整个 bbox。这是整条管线唯一的联网入口，在这里拦住。
+        raise SystemExit(f"Overpass 只给了半份数据：{data['remark']}")
+    data["__query__"] = query
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    with gzip.open(cache, "wt", encoding="utf-8", compresslevel=6) as handle:
+        json.dump(data, handle, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    return data
+
+
+def fetch_xml(query: str, cache: Path) -> Path:
+    """跑一条 `[out:xml]` 查询，原样落到 `cache`，osmium 直接读得动。
+
+    与 `fetch` 的分别只在格式：那边把 JSON 交给下游自己解析，这边把 OSM XML 交给
+    osmium（`pbf` 用它补行政边界被区域文件裁掉的成员）。礼貌暂停、多端点、三轮重试、
+    半份数据的拦截四件都是 `_request` 里同一套，只有 `remark` 不同——
+    XML 里它是一个元素而不是一个键。
+
+    缓存不比对查询（XML 里没地方塞它）。**所以文件名必须说出这份数据是按什么要的**，
+    调用方把范围的指纹写进文件名，理由与 `pbf` 那边的层级一样。
+
+    **只走主端点，不回退到镜像。** 补边界成员是分几趟取的，而镜像可能落后好几个月
+    （2026-09 实测过一次）：两趟拿到不同代的数据，同一个节点就会有两个版本，
+    `osmium export` 当场拒绝整份文件；更坏的是落后那一代的成员表指向已经删掉的节点，
+    于是环照样不闭合——而那是**静默**失败，正是这一步要修的那个形状。
+    要素那条路（`fetch`）没有这个问题：它一次查一个画框，一趟就是一份完整快照。
+    """
+    if cache.exists():
+        return cache
+    # 按 id 直取是秒级的查询，120 秒没回音就是挂住了，重试比等着划算
+    body = _request(query, endpoints=ENDPOINTS[:1], timeout=120)
+    text = body.decode("utf-8", errors="replace")
+    if "<remark>" in text:
+        remark = text[text.index("<remark>") + 8:text.index("</remark>")]
+        raise SystemExit(f"Overpass 只给了半份数据：{remark}")
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_bytes(body)
+    return cache
+
+
+def _request(query: str, endpoints: tuple[str, ...] = ENDPOINTS, timeout: int = 900) -> bytes:
+    """发一次查询，端点轮着试、三轮重试，返回原始响应体。
+
+    `timeout` 要配着查询的量级给：画框那种大查询本来就要算几分钟（默认 900），
+    而按 id 直取是秒级的，给它 900 秒只意味着**一次挂死要等一刻钟**才轮到重试。
+    """
     payload = urllib.parse.urlencode({"data": query}).encode("utf-8")
     last_error: Exception | None = None
     for attempt in range(3):
-        for endpoint in ENDPOINTS:
+        for endpoint in endpoints:
             _pause()
             request = urllib.request.Request(endpoint, data=payload, headers={"User-Agent": _USER_AGENT})
             try:
-                with urllib.request.urlopen(request, timeout=900) as response:
-                    body = response.read()
+                with urllib.request.urlopen(request, timeout=timeout) as response:
+                    return response.read()
             except (urllib.error.URLError, TimeoutError, OSError) as error:
                 last_error = error
-                continue
-            data = json.loads(body)
-            if "remark" in data:
-                # 超时的 Overpass 返回 200、合法 JSON、以及**超时前收到的那部分要素**。
-                # 落盘就等于把半份数据缓存成了「输入」，而 `mappack.covers` 拦不住它：
-                # 半份要素通常照样铺满整个 bbox。这是整条管线唯一的联网入口，在这里拦住。
-                raise SystemExit(f"Overpass 只给了半份数据：{data['remark']}")
-            data["__query__"] = query
-            cache.parent.mkdir(parents=True, exist_ok=True)
-            with gzip.open(cache, "wt", encoding="utf-8", compresslevel=6) as handle:
-                json.dump(data, handle, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
-            return data
         time.sleep(20 * (attempt + 1))
     raise SystemExit(f"Overpass 三轮都没要到数据：{last_error}")
 

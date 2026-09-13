@@ -13,11 +13,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 from pathlib import Path
 
-from .boundary import spellings
+from . import overpass
+from .boundary import chinese_name, spellings
 
 # 「市」在各国是第几级、叫什么。行政边界回答的是「这是哪座城」，而这个级别各国不同——
 # **逐国一行，不是逐城一行**，所以它是一张小表而不是一份清单。
@@ -40,12 +42,17 @@ CITY_LEVELS = {
     # 「城市名单」那一节。
     "China": {"levels": (3, 4, 5, 6), "cover": (3, 4, 5),
               "suffix": ("市", "区", "县", "旗", "州", "盟"),
-              # 按后缀收之后还得明确排掉两类，它们不是城：
+              # 按后缀收之后还得明确排掉三类，它们不是城：
               # * 省级的「自治区」——新疆、内蒙古、广西、宁夏，正好以「区」结尾；
               # * 地级的「地区」行政公署——喀什地区、大兴安岭地区，是一片区域不是一座城，
-              #   它下辖的县市才是。
+              #   它下辖的县市才是；
+              # * 「综合实验区」——省直管的功能区管理机构，与「地区」同类：全国只有平潭
+              #   一个，它与自己下辖的平潭县地盘完全重合，两个都收就是同地两张卡，
+              #   而且两者都落在福州市界内（平潭县的区划代码 350128 仍挂在福州下），
+              #   闸门 2「同级不重叠」因此报红。收下辖的平潭县，人说的也是「我在平潭」。
+              # 「新区」不在此列：浦东、滨海、雄安、两江、沈北都是正经的行政区。
               # 自治州与盟不排除：它们与地级市平级、下辖县市，延边、湘西、锡林郭勒都是。
-              "exclude": ("自治区", "地区"),
+              "exclude": ("自治区", "地区", "综合实验区"),
               # `names` 是**专名白名单**：`名字 → 只认这一级的那个关系`。
               #
               # 两个特别行政区的名字不带任何后缀（OSM 里 `name:zh-Hans` 就写「香港」
@@ -78,7 +85,12 @@ CITY_LEVELS = {
               #
               # 为什么不干脆把州从覆盖层里降下去：塔什库尔干那种州域深处的县城
               # 只有州盖得住，降级会直接出覆盖空洞（散步判 unmatched）。
-              "region_suffix": ("自治州", "盟")},
+              "region_suffix": ("自治州", "盟"),
+              # 闸门的容忍值（`gates.py`）。阿坝藏族羌族自治州与草湖项目区的包是空白：
+              # OSM 里没写它们的驻地，画框只能退到州域的外接框中心，落在没有城区的地方。
+              # 2026-09-09 已拍板留着不动（对症的是画框规则，不是从名单里删人），
+              # 所以这两座是**已知且认过**的，不该每轮再拦一次。
+              "gates": {"empty_packages": 2}},
     # 日本：市町村都在 7，东京的 23 特别区也在这一层（2026-09-07 实测，1979 个面里
     # 市 791、町 780、村 302、区 23，另有 82 个只有 admin_level 没有名字的碎面）。
     # 上下两层都不是城：6 是「郡」（370 个，一堆町村的合称），8 是政令市的行政区
@@ -116,6 +128,19 @@ def run(*args: str) -> None:
     subprocess.run([str(a) for a in args], check=True)
 
 
+def run_to(target: Path, *args: str) -> None:
+    """跑一条 osmium，产物先落到临时名、成功后才改成正式名。
+
+    中途失败（网络断、磁盘满、Ctrl-C）留下的半份文件若占着正式名字，下一趟就会把它
+    当成缓存。这条管线为「静默的半份数据」栽过一次（见 `overpass.fetch` 里那段注释），
+    这里不给它第二次机会。
+    """
+    # 临时名把 `.part` 插在后缀**之前**：osmium 靠后缀认格式，`.pbf.part` 它认不出来
+    tmp = target.with_name(f"{target.stem}.part{target.suffix}")
+    run(*args, "-o", tmp, "--overwrite")
+    tmp.replace(target)
+
+
 def source_stamp(source: Path) -> dict:
     """这份区域文件是什么时候的 OSM。进每个包的 manifest，与 Overpass 那条路的
     `timestamp_osm_base` 是同一个意思。"""
@@ -128,27 +153,48 @@ def source_stamp(source: Path) -> dict:
     }
 
 
-def admin_boundaries(source: Path, out: Path, levels: tuple[int, ...]) -> Path:
+def admin_boundaries(source: Path, out: Path, rule: dict) -> tuple[Path, set[str]]:
     """把整个区域里的市级行政边界抽成一份 GeoJSONSeq。
 
     **这一步取代了逐城手写的 `cities.json`。** 手写清单存在的唯一理由是 Overpass 要
     逐城查询；区域文件在手上，边界就是一次筛选的事——城市名单与边界一起出来了。
+
+    产物三份，`out` 只当基名用，真正的名字各自说出自己是什么：
+
+    * `<基名>.pbf`——按 `boundary=administrative` 筛过的关系（连成员）。
+    * `<基名>-full-<指纹>.pbf`——成员从上游补齐之后的那份。`admin_centres` 读它。
+    * `<基名>-full-<指纹>.geojsonseq`——面。这一份是返回值。
+
+    **指纹是「补齐范围」的指纹**，不是内容的：名单规则一改，该补的成员就跟着变，
+    而缓存必须当场失效。理由与文件名带层级那条一样（见模块开头）。
+
+    第二个返回值是**边界补过成员的那些关系**。区域文件按国界裁，所以「边界在这份文件里
+    本来就完整」等价于「主体在这个国家境内」——名单那头拿它把邻国的单位挡在外面
+    （`__main__._select_cities` 的兜底那条）。
     """
-    # 过滤过的那份关系文件要**先保证在**，再看 geojsonseq 有没有缓存：
-    # `admin_centres` 也要读它（取驻地成员），而先前这一步在 geojsonseq 命中缓存时会
-    # 被跳过，于是日本那轮手上只有 `admin-7.geojsonseq`、没有 `admin-7.pbf`。
-    # 已经在的话这两行不花时间。
     filtered = out.with_suffix(".pbf")
     if not filtered.exists():
-        run("osmium", "tags-filter", source, "r/boundary=administrative", "-o", filtered, "--overwrite")
-    if out.exists():
-        return out
-    levels_set = {str(level) for level in levels}
-    with out.open("w", encoding="utf-8") as sink:
+        run_to(filtered, "osmium", "tags-filter", source, "r/boundary=administrative")
+
+    missing = missing_city_members(filtered, rule)
+    # 排序方式是**缓存键的一部分**（指纹按这个序列算，批次也按它切）。换一种排法，
+    # 指纹与每一批的内容都会变，已经取回来的几十万个对象当场全部失效，得重下一遍。
+    ids = sorted({way for ways in missing.values() for way in ways})
+    digest = hashlib.sha1("\n".join(ids).encode("utf-8")).hexdigest()[:8]
+    whole = out.with_name(f"{out.stem}-full-{digest}.pbf")
+    if not whole.exists():
+        _patch_members(filtered, whole, out.with_name(f"{out.stem}-patch-{digest}"), ids)
+
+    final = out.with_name(f"{out.stem}-full-{digest}.geojsonseq")
+    if final.exists():
+        return final, set(missing)
+    levels_set = {str(level) for level in rule["levels"]}
+    staging = final.with_name(f"{final.stem}.part{final.suffix}")
+    with staging.open("w", encoding="utf-8") as sink:
         process = subprocess.Popen(
             # -u type_id：给每个 feature 一个 `@id`（形如 `a1826135`）。**不能省**——
             # 没有它，每座城的身份都是 None，名册会把全国挤成一条（2026-09-06 实测）
-            ["osmium", "export", str(filtered), "-f", "geojsonseq",
+            ["osmium", "export", str(whole), "-f", "geojsonseq",
              "--geometry-types=polygon", "-u", "type_id"],
             stdout=subprocess.PIPE, text=True)
         for line in process.stdout:
@@ -161,8 +207,199 @@ def admin_boundaries(source: Path, out: Path, levels: tuple[int, ...]) -> Path:
             feature = json.loads(line)
             if str((feature.get("properties") or {}).get("admin_level")) in levels_set:
                 sink.write(json.dumps(feature, ensure_ascii=False) + "\n")
-        process.wait()
-    return out
+        if process.wait() != 0:
+            raise SystemExit(f"osmium export 失败（{process.returncode}）")
+    staging.replace(final)
+    return final, set(missing)
+
+
+def city_name(tags: dict, rule: dict) -> str | None:
+    """这个行政单位按名单规则该叫什么；不该进名单就返回 None。
+
+    名单规则**只此一份**。`country` 读边界时按它筛，`admin_boundaries` 决定「哪些关系
+    值得把裁掉的成员补回来」时也按它筛——两处各写一遍，补齐的范围就会与名单的范围
+    悄悄错开，而错开的那几座城什么都不报，只是不在名单里。
+    """
+    level = int(tags.get("admin_level") or 0)
+    if level not in rule["levels"]:
+        return None
+    name = chinese_name(tags) or tags.get("name")
+    if not name:
+        return None
+    # 专名白名单先过：特别行政区按后缀筛不出来，而同名的关系可能不止一个
+    # （香港在 3 级与 4 级各有一份），所以这条白名单连级数一起认（`CITY_LEVELS`）
+    names = rule.get("names") or {}
+    if name in names:
+        if level != names[name]:
+            return None
+    else:
+        suffix = rule.get("suffix")
+        if suffix and not name.endswith(tuple(suffix)):
+            return None
+        exclude = rule.get("exclude") or ()
+        if exclude and name.endswith(tuple(exclude)):
+            return None
+    if any(key not in tags for key in rule.get("require") or ()):
+        return None
+    return name
+
+
+# 组成面要靠这两个角色的成员；`subarea` 缺了不影响面，`label` 是个点。
+_RING_ROLES = frozenset({"outer", "inner", ""})
+# 一批取多少个对象。骨架与节点都**按 id 直取**，那是索引查询：3 万个一批实测 6.4 秒、
+# 1.7 MB。递归（`>`）则贵得多——3899 条 way 一次递归出 30 万个节点，公共端点直接 504。
+# Overpass 是志愿者运营的服务，这里串行、每批之间歇着（`overpass._pause`）。
+_PATCH_BATCH = 30000
+
+
+def missing_city_members(filtered: Path, rule: dict) -> dict[str, list[str]]:
+    """这份关系文件里，**本该成城却组不成面**的关系各缺哪些成员 way。
+
+    区域文件按陆地裁。福建沿海那一排市把 12 海里领海基线画进了自己的行政边界
+    （台海那一带标得格外细，马祖一带的限制水域还被挖成内环），那些成员 way 落在裁切
+    范围外。**osmium 组不成环就静默跳过整个关系**——`export -e` 一条错误都不报——
+    于是福州、厦门、泉州、莆田、漳州、宁德、平潭从第一代目录起就不在名单里，
+    而线上看不出任何异常（2026-09-12 查实根因，13 条补齐后 osmium 当场组得出面）。
+
+    **这不是福建特有的性质**：凡是把领海或跨境段画进边界的地方都会这样，所以判据是
+    「缺了担环的成员」，不是「在福建」。
+    """
+    present: set[str] = set()
+    process = subprocess.Popen(["osmium", "cat", "-f", "opl", "--object-type=way", str(filtered)],
+                               stdout=subprocess.PIPE, text=True)
+    for line in process.stdout:
+        if line.startswith("w"):
+            present.add(line[1:line.index(" ")])
+    if process.wait() != 0:
+        raise SystemExit("osmium cat 读不出 way")
+
+    missing: dict[str, list[str]] = {}
+    for osm_id, tags, members in _relations(filtered):
+        if city_name(tags, rule) is None:
+            continue
+        lost = sorted({ref for kind, ref, role in members
+                       if kind == "w" and role in _RING_ROLES and ref not in present}, key=int)
+        if lost:
+            missing[osm_id] = lost
+    return missing
+
+
+def _relations(pbf_path: Path):
+    """`osmium cat -f opl` 的关系行 → `(id, tags, members)`，一趟几秒。
+
+    整份读进来的是关系，不是节点：那份过滤过的 pbf 里有七百万个节点。
+    """
+    process = subprocess.Popen(["osmium", "cat", "-f", "opl", "--object-type=relation", str(pbf_path)],
+                               stdout=subprocess.PIPE, text=True)
+    for line in process.stdout:
+        if not line.startswith("r"):
+            continue
+        fields = line.rstrip("\n").split(" ")
+        tags: dict[str, str] = {}
+        members: list[tuple[str, str, str]] = []
+        for field in fields[1:]:
+            if field.startswith("T") and len(field) > 1:
+                for pair in field[1:].split(","):
+                    if "=" in pair:
+                        key, value = pair.split("=", 1)
+                        tags[key] = _opl_unescape(value)
+            elif field.startswith("M") and len(field) > 1:
+                for member in field[1:].split(","):
+                    if "@" in member:
+                        ref, role = member.split("@", 1)
+                        members.append((ref[0], ref[1:], role))
+        yield fields[0][1:], tags, members
+    if process.wait() != 0:
+        raise SystemExit("osmium cat 读不出关系")
+
+
+def _opl_unescape(value: str) -> str:
+    """OPL 把非 ASCII 与分隔符写成 `%十六进制%`（「福州市」是 `%798f%%5dde%%5e02%`）。
+
+    不还原就认不出任何一个中文名字，而名字正是名单的判据。
+    """
+    out, index = [], 0
+    while index < len(value):
+        if value[index] == "%":
+            end = value.find("%", index + 1)
+            if end > index + 1:
+                out.append(chr(int(value[index + 1:end], 16)))
+                index = end + 1
+                continue
+        out.append(value[index])
+        index += 1
+    return "".join(out)
+
+
+def _patch_members(filtered: Path, whole: Path, base: Path, ids: list[str]) -> None:
+    """把 `ids` 这些 way（连它们的节点）从上游取回来，合进关系文件。
+
+    为什么补而不是换一份更大的区域文件：`asia-latest` 有 12 GB，而且**未必**带着这些
+    way——它也是按框裁的，只是框更大；更要紧的是它会把邻国的行政关系带得更全，
+    而名单靠名字后缀筛，「阿拉木图州」「高雄市」都以白名单里的字结尾。
+    缺什么取什么是唯一不牵动别处的那条路（四条路的比较见城市图实施文档）。
+    """
+    if not ids:
+        run_to(whole, "osmium", "cat", filtered)
+        return
+
+    # **分两趟取，而且每一趟都只取「确实还缺的」。** `osmium merge` 只收得拢一模一样的
+    # 对象，所以同一个 id 一旦有两份数据，`osmium export` 就拒绝整份文件。两处会撞上：
+    #
+    # * 让 Overpass 用 `>` 把节点一起递归出来，相邻的 way 共用端点，同一个节点会落进
+    #   好几批；两批若来自不同代的数据，同一个 id 就带着两个版本活下来
+    #   （2026-09-13 实测 5 个节点各有 v2 与 v3，因为其中一批走了落后的镜像）。
+    # * 补回来的 way 与原有的边界也共用端点——中国这一轮 301753 个节点里有 155 个
+    #   本来就在文件里，而文件里那份带着版本号、取回来的是骨架，osmium 认不出是同一个。
+    #
+    # 所以先把 way 并进去，再让 osmium 自己说还缺哪些节点，只取那些。
+    way_parts = [_as_pbf(overpass.fetch_xml(
+        f"[out:xml][timeout:300];way(id:{','.join(batch)});out skel;",
+        _batch_file(base, "ways", index)))
+        for index, batch in enumerate(_batches(ids))]
+    staged = base.with_name(f"{base.name}-ways.pbf")
+    if not staged.exists():
+        run_to(staged, "osmium", "merge", filtered, *way_parts)
+
+    node_parts = [_as_pbf(overpass.fetch_xml(
+        f"[out:xml][timeout:300];node(id:{','.join(batch)});out skel;",
+        _batch_file(base, "nodes", index)))
+        for index, batch in enumerate(_batches(_missing_nodes(staged)))]
+    run_to(whole, "osmium", "merge", staged, *node_parts)
+
+
+def _batch_file(base: Path, kind: str, index: int) -> Path:
+    """批文件名带上批大小：换了批大小切分就变了，而**文件名不变就会读到切分不同的旧缓存**。
+    补丁最终的内容与怎么分批无关，所以指纹里不带它，只带在批文件名上。"""
+    return base.with_name(f"{base.name}-{kind}-{_PATCH_BATCH}-{index}.osm")
+
+
+def _missing_nodes(pbf_path: Path) -> list[str]:
+    """这份文件里，way 引用了却不在的节点。
+
+    `check-refs -i` 对每条缺失的成员只报一个引用者（所以**不能**拿它统计谁缺成员，
+    福州市就是这么被漏掉的），但这里要的只是 id，够用。缺引用时它返回 1，那是常态。
+    """
+    found = subprocess.run(["osmium", "check-refs", "-i", str(pbf_path)],
+                           capture_output=True, text=True)
+    if found.returncode > 1:
+        raise SystemExit(f"osmium check-refs 失败（{found.returncode}）：{found.stderr.strip()}")
+    return sorted({line.split(" ", 1)[0][1:] for line in found.stdout.splitlines()
+                   if line.startswith("n")}, key=int)
+
+
+def _batches(ids: list[str]):
+    for start in range(0, len(ids), _PATCH_BATCH):
+        yield ids[start:start + _PATCH_BATCH]
+
+
+def _as_pbf(xml: Path) -> Path:
+    """Overpass 的 XML → pbf。顺手排序：`sort` 与 `merge` 都要求输入有序，
+    而 Overpass 给的顺序是它自己的。"""
+    part = xml.with_suffix(".pbf")
+    if not part.exists():
+        run_to(part, "osmium", "sort", xml)
+    return part
 
 
 def osm_id_of(feature: dict) -> str:
